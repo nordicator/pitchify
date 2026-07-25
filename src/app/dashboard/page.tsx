@@ -70,9 +70,12 @@ export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [customIdea, setCustomIdea] = useState("");
-  const [phase, setPhase] = useState<"setup" | "launching" | "session">("setup");
+  const [phase, setPhase] = useState<"setup" | "launching" | "session" | "summary">("setup");
   const [offers, setOffers] = useState<Offer[]>([]);
   const [raised, setRaised] = useState(0);
+  const [equityGiven, setEquityGiven] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(180);
+  const [timeAlert, setTimeAlert] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -97,6 +100,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (phase === "session") {
       startCamera();
+      setTimeLeft(180);
     }
     return () => {
       if (videoRef.current?.srcObject) {
@@ -105,6 +109,36 @@ export default function Dashboard() {
       }
     };
   }, [phase, startCamera]);
+
+  useEffect(() => {
+    if (phase !== "session") return;
+    if (timeLeft <= 0) {
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      setPhase("summary");
+      return;
+    }
+    const interval = setInterval(() => {
+      setTimeLeft((t) => t - 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phase, timeLeft]);
+
+  useEffect(() => {
+    if (phase !== "session") return;
+    if (timeLeft === 120) setTimeAlert("2 minutes remaining");
+    else if (timeLeft === 60) setTimeAlert("1 minute remaining");
+    else if (timeLeft === 30) setTimeAlert("30 seconds — wrap it up!");
+    else if (timeLeft === 10) setTimeAlert("10 seconds!");
+  }, [timeLeft, phase]);
+
+  useEffect(() => {
+    if (!timeAlert) return;
+    const timeout = setTimeout(() => setTimeAlert(null), 3000);
+    return () => clearTimeout(timeout);
+  }, [timeAlert]);
 
   const canLaunch =
     difficulty !== null &&
@@ -118,6 +152,93 @@ export default function Dashboard() {
     { speaker: "You", text: "$49 per user per month, with team plans starting at $399 for ten seats." },
     { speaker: "The Operator", text: "What's your current ARR and how many paying teams do you have?" },
   ];
+
+  if (phase === "summary" && difficulty) {
+    const goalMet = raised >= difficulties[difficulty].raiseNum;
+    const equityLimit = parseFloat(difficulties[difficulty].equity);
+    const withinEquity = equityGiven <= equityLimit;
+    const passed = goalMet && withinEquity;
+
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center gap-8 text-center"
+        >
+          <div className={`rounded-full px-6 py-2 text-sm font-semibold ${
+            passed
+              ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-destructive/10 text-destructive"
+          }`}>
+            {passed ? "Deal Closed" : "No Deal"}
+          </div>
+
+          <h1 className="text-4xl font-bold tracking-tight md:text-5xl">
+            {passed ? "You survived the tank." : "The sharks ate you alive."}
+          </h1>
+
+          <div className="grid w-full max-w-sm gap-4 rounded-xl border p-6">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Raised</span>
+              <span className="font-mono text-sm font-semibold">
+                ${raised.toLocaleString()}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Goal</span>
+              <span className="font-mono text-sm font-semibold">
+                {difficulties[difficulty].raise}
+              </span>
+            </div>
+            <div className="h-px bg-border" />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Equity given</span>
+              <span className={`font-mono text-sm font-semibold ${
+                !withinEquity ? "text-destructive" : ""
+              }`}>
+                {equityGiven}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Equity limit</span>
+              <span className="font-mono text-sm font-semibold">
+                {difficulties[difficulty].equity}
+              </span>
+            </div>
+            <div className="h-px bg-border" />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Result</span>
+              <span className={`font-mono text-sm font-semibold ${
+                passed ? "text-emerald-400" : "text-destructive"
+              }`}>
+                {goalMet && !withinEquity
+                  ? "Over equity limit"
+                  : !goalMet
+                    ? "Didn't hit goal"
+                    : "Passed"}
+              </span>
+            </div>
+          </div>
+
+          <Button
+            size="lg"
+            onClick={() => {
+              setPhase("setup");
+              setRaised(0);
+              setEquityGiven(0);
+              setOffers([]);
+              setMode(null);
+              setDifficulty(null);
+              setTimeLeft(180);
+            }}
+          >
+            Try again
+          </Button>
+        </motion.div>
+      </div>
+    );
+  }
 
   if (phase === "launching" && difficulty) {
     const { raiseNum, equity } = difficulties[difficulty];
@@ -177,16 +298,21 @@ export default function Dashboard() {
               session
             </span>
           </div>
-          {difficulty && (
-            <div className="flex items-center gap-4 font-mono text-xs">
-              <span className="text-muted-foreground">
-                Goal <span className="font-semibold text-foreground">{difficulties[difficulty].raise}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Equity limit <span className="font-semibold text-foreground">{difficulties[difficulty].equity}</span>
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-4 font-mono text-xs">
+            {difficulty && (
+              <>
+                <span className="text-muted-foreground">
+                  Goal <span className="font-semibold text-foreground">{difficulties[difficulty].raise}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Equity limit <span className="font-semibold text-foreground">{difficulties[difficulty].equity}</span>
+                </span>
+              </>
+            )}
+            <span className={`font-semibold tabular-nums ${timeLeft <= 30 ? "text-destructive" : "text-foreground"}`}>
+              {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, "0")}
+            </span>
+          </div>
         </header>
 
         {/* Progress bar */}
@@ -215,6 +341,22 @@ export default function Dashboard() {
           {/* Main scene — judges 3D */}
           <main className="relative flex-1 bg-black">
             <JudgesSceneLoader />
+
+            {/* Time alert */}
+            <AnimatePresence>
+              {timeAlert && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="absolute top-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/10 bg-black/80 px-4 py-2 backdrop-blur-sm"
+                >
+                  <p className={`font-mono text-sm font-semibold ${timeLeft <= 30 ? "text-destructive" : "text-foreground"}`}>
+                    {timeAlert}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Mini webcam — top right */}
             <div className="absolute top-4 right-4 z-10 h-[120px] w-[160px] overflow-hidden rounded-lg border border-white/10 bg-black shadow-lg">
@@ -268,7 +410,9 @@ export default function Dashboard() {
                           onClick={() => {
                             const num = parseFloat(offer.amount.replace(/[$,K,M]/g, "")) *
                               (offer.amount.includes("M") ? 1000000 : offer.amount.includes("K") ? 1000 : 1);
+                            const eq = parseFloat(offer.equity.replace("%", ""));
                             setRaised((prev) => prev + num);
+                            setEquityGiven((prev) => prev + eq);
                             setOffers((prev) => prev.filter((o) => o.id !== offer.id));
                           }}
                         >
@@ -341,7 +485,7 @@ export default function Dashboard() {
                     const stream = videoRef.current.srcObject as MediaStream;
                     stream.getTracks().forEach((track) => track.stop());
                   }
-                  setPhase("setup");
+                  setPhase("summary");
                   setCameraReady(false);
                   setCameraError(null);
                 }}
