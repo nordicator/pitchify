@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+backend/
+node_modules/
+.next/
+.git/
+*.md
+__pycache__/
+*.pyc
+.claude/
