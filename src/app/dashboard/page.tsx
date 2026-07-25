@@ -17,11 +17,47 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { JudgesSceneLoader } from "@/components/judges-scene-loader";
 
 type Mode = "generate" | "custom";
+type Difficulty = "easy" | "normal" | "difficult";
+
+const difficulties = {
+  easy: { label: "Easy", raise: "$50K", raiseNum: 50000, equity: "20%" },
+  normal: { label: "Normal", raise: "$250K", raiseNum: 250000, equity: "10%" },
+  difficult: { label: "Difficult", raise: "$1M", raiseNum: 1000000, equity: "5%" },
+} as const;
+
+function RollingNumber({ target, duration = 2000 }: { target: number; duration?: number }) {
+  const [value, setValue] = useState(0);
+
+  useEffect(() => {
+    const start = performance.now();
+    let raf: number;
+
+    function tick(now: number) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.floor(eased * target));
+      if (progress < 1) {
+        raf = requestAnimationFrame(tick);
+      }
+    }
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+
+  return (
+    <span className="tabular-nums">
+      ${value.toLocaleString()}
+    </span>
+  );
+}
 
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [customIdea, setCustomIdea] = useState("");
-  const [sessionStarted, setSessionStarted] = useState(false);
+  const [phase, setPhase] = useState<"setup" | "launching" | "session">("setup");
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -44,7 +80,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (sessionStarted) {
+    if (phase === "session") {
       startCamera();
     }
     return () => {
@@ -53,10 +89,11 @@ export default function Dashboard() {
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [sessionStarted, startCamera]);
+  }, [phase, startCamera]);
 
   const canLaunch =
-    mode === "generate" || (mode === "custom" && customIdea.trim().length > 0);
+    difficulty !== null &&
+    (mode === "generate" || (mode === "custom" && customIdea.trim().length > 0));
 
   const placeholderTranscript = [
     { speaker: "You", text: "We're building an AI-powered tool that helps sales teams practice their pitches before real calls." },
@@ -67,7 +104,49 @@ export default function Dashboard() {
     { speaker: "The Operator", text: "What's your current ARR and how many paying teams do you have?" },
   ];
 
-  if (sessionStarted) {
+  if (phase === "launching" && difficulty) {
+    const { raiseNum, equity } = difficulties[difficulty];
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-8">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center gap-6 text-center"
+        >
+          <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+            Your target raise
+          </p>
+          <h1 className="text-6xl font-bold tracking-tight md:text-8xl">
+            <RollingNumber target={raiseNum} duration={2200} />
+          </h1>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1.5 }}
+            className="flex flex-col items-center gap-1"
+          >
+            <p className="text-lg text-muted-foreground">
+              for <span className="font-semibold text-foreground">{equity}</span> equity
+            </p>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 2.5 }}
+          >
+            <Button
+              size="lg"
+              onClick={() => setPhase("session")}
+            >
+              Connect with judges
+            </Button>
+          </motion.div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (phase === "session") {
     return (
       <div className="flex h-screen flex-col overflow-hidden">
         <header className="flex shrink-0 items-center border-b px-6 py-4">
@@ -149,7 +228,7 @@ export default function Dashboard() {
                     const stream = videoRef.current.srcObject as MediaStream;
                     stream.getTracks().forEach((track) => track.stop());
                   }
-                  setSessionStarted(false);
+                  setPhase("setup");
                   setCameraReady(false);
                   setCameraError(null);
                 }}
@@ -254,9 +333,46 @@ export default function Dashboard() {
                 )}
               </AnimatePresence>
 
+              <AnimatePresence>
+                {mode !== null && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="grid gap-3 overflow-hidden"
+                  >
+                    <Label>Difficulty</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(Object.entries(difficulties) as [Difficulty, typeof difficulties[Difficulty]][]).map(
+                        ([key, { label, raise, equity }]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setDifficulty(key)}
+                            className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition-colors ${
+                              difficulty === key
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-muted-foreground/30"
+                            }`}
+                          >
+                            <span className="text-sm font-medium">{label}</span>
+                            <span className="text-xs text-muted-foreground">
+                              Raise {raise}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              for {equity}
+                            </span>
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <Button
                 disabled={!canLaunch}
-                onClick={() => setSessionStarted(true)}
+                onClick={() => setPhase("launching")}
                 className="w-full"
               >
                 Launch session
