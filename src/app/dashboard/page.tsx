@@ -263,12 +263,23 @@ export default function Dashboard() {
     setIsProcessing(true);
   }, []);
 
+  const sendEndSessionRef = useRef<() => void>(() => {});
+
   const onInvestorResponse = useCallback((messages: InvestorMessage[]) => {
     setIsProcessing(false);
+    const closingPhrases = ["heard enough", "thank you", "we have what we need", "alright, thank"];
+    const isClosing = messages.some((m) =>
+      closingPhrases.some((p) => m.text.toLowerCase().includes(p))
+    );
+
     for (const msg of messages) {
       ttsEnqueue(msg.text, () => {
         setTranscript((prev) => [...prev, { speaker: msg.investor, text: msg.text }]);
       });
+    }
+
+    if (isClosing) {
+      setTimeout(() => sendEndSessionRef.current(), 2000);
     }
   }, [ttsEnqueue]);
 
@@ -310,6 +321,7 @@ export default function Dashboard() {
     sessionId,
     { onStatus, onProcessing, onInvestorResponse, onFinalDecision, onError: onWsError }
   );
+  sendEndSessionRef.current = sendEndSession;
 
   sendTranscriptRef.current = sendTranscript;
 

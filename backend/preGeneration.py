@@ -9,7 +9,10 @@ import os
 import re
 import time
 
+from dotenv import load_dotenv
 from google import genai
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 from google.genai import types
 from pydantic import BaseModel
 

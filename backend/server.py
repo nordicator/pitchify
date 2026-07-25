@@ -3,11 +3,14 @@ FastAPI server for Pitchify.
 HTTP endpoints for session setup + WebSocket for Gemini Live audio bridge.
 """
 
+import base64
 import os
 import traceback
 import uuid
 
 import httpx
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -55,6 +58,32 @@ class PitchResponse(BaseModel):
     image_base64: str
 
 
+def _generate_product_image(product_name: str, description: str) -> str:
+    """Generate a product image using Gemini's image generation. Returns base64 data URI or empty string."""
+    try:
+        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        prompt = (
+            f"Generate a clean, minimal product mockup image for a startup called '{product_name}'. "
+            f"Product: {description}. "
+            "Modern, professional product photography style on a clean white/gradient background. No text."
+        )
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp-image-generation",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            ),
+        )
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                    img_b64 = base64.b64encode(part.inline_data.data).decode()
+                    return f"data:{part.inline_data.mime_type};base64,{img_b64}"
+    except Exception as e:
+        print(f"Image generation failed (non-fatal): {e}")
+    return ""
+
+
 @app.post("/generate-pitch", response_model=PitchResponse)
 async def generate_pitch_endpoint():
     """Generates a pitch using Gemini."""
@@ -63,6 +92,8 @@ async def generate_pitch_endpoint():
 
         raise_num = int(pitch_data.raise_amount.replace(",", "").replace("$", ""))
         equity_num = float(pitch_data.equity_offered.replace("%", ""))
+
+        image_b64 = _generate_product_image(pitch_data.product_name, pitch_data.product_description)
 
         return PitchResponse(
             content=PitchContent(
@@ -74,7 +105,7 @@ async def generate_pitch_endpoint():
                 raise_amount=raise_num,
                 equity_percent=equity_num,
             ),
-            image_base64="",
+            image_base64=image_b64,
         )
 
     except Exception as e:
