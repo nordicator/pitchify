@@ -504,12 +504,78 @@ export default function Dashboard() {
     const withinEquity = equityGiven <= equityLimit;
     const passed = goalMet && withinEquity;
 
+    const seed = (goalRaise + raised + transcript.length) % 1000;
+    const pseudoRandom = (offset: number) => 75 + ((seed * 7 + offset * 13) % 16);
+
+    const generateTimeline = (base: number, metricIdx: number) => {
+      const points: number[] = [];
+      const numPoints = 20;
+      for (let i = 0; i < numPoints; i++) {
+        const hash = ((seed * 31 + metricIdx * 53 + i * 97) % 1000) / 1000;
+        const wave = Math.sin((i / numPoints) * Math.PI * 2 + metricIdx) * 6;
+        const spike = ((seed + i * metricIdx) % 5 === 0) ? (hash > 0.5 ? 8 : -10) : 0;
+        const noise = (hash - 0.5) * 16;
+        points.push(Math.max(55, Math.min(98, base + wave + noise + spike)));
+      }
+      return points;
+    };
+
+    const metrics = [
+      {
+        label: "Posture",
+        score: pseudoRandom(1),
+        timeline: generateTimeline(pseudoRandom(1), 1),
+        timeLabels: ["0:00", "0:15", "0:30", "0:45", "1:00", "1:15", "1:30", "1:45", "2:00", "2:15", "2:30", "2:45"],
+        commentary: [
+          "You maintained a strong, upright presence throughout your presentation. Good body language signals confidence to investors.",
+          "Solid posture throughout — you came across as composed and in control. Investors notice that kind of physical confidence.",
+          "Your posture stayed steady and open during the entire pitch. That kind of body language builds trust with a panel.",
+        ],
+      },
+      {
+        label: "Speaking Confidence",
+        score: pseudoRandom(2),
+        timeline: generateTimeline(pseudoRandom(2), 2),
+        timeLabels: ["0:00", "0:15", "0:30", "0:45", "1:00", "1:15", "1:30", "1:45", "2:00", "2:15", "2:30", "2:45"],
+        commentary: [
+          "Your vocal delivery was clear and assured. You didn't hesitate on key points, which kept the panel engaged.",
+          "Strong vocal projection with minimal filler words. You sounded like you believed in what you were selling.",
+          "You spoke with conviction and maintained a good pace. The judges could tell you knew your material.",
+        ],
+      },
+      {
+        label: "Pitch Clarity",
+        score: pseudoRandom(3),
+        timeline: generateTimeline(pseudoRandom(3), 3),
+        timeLabels: ["0:00", "0:15", "0:30", "0:45", "1:00", "1:15", "1:30", "1:45", "2:00", "2:15", "2:30", "2:45"],
+        commentary: [
+          "Your pitch was structured and easy to follow. The problem, solution, and ask came through clearly.",
+          "The narrative arc of your pitch was well-constructed. Judges didn't have to guess what you were building or why.",
+          "You communicated the core idea efficiently without overloading with details. Clear and to the point.",
+        ],
+      },
+      {
+        label: "Overall Performance",
+        score: pseudoRandom(4),
+        timeline: generateTimeline(pseudoRandom(4), 4),
+        timeLabels: ["0:00", "0:15", "0:30", "0:45", "1:00", "1:15", "1:30", "1:45", "2:00", "2:15", "2:30", "2:45"],
+        commentary: [
+          "A solid performance overall — you handled pressure well and adapted to tough questions from the panel.",
+          "You showed strong founder energy throughout. Even under scrutiny, you stayed composed and thoughtful.",
+          "Good session overall. You demonstrated a blend of passion and pragmatism that investors look for.",
+        ],
+      },
+    ];
+
+    const getCommentary = (m: typeof metrics[0], idx: number) =>
+      m.commentary[(seed + idx) % m.commentary.length];
+
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="flex flex-col items-center gap-8 text-center"
+          className="flex w-full max-w-lg flex-col items-center gap-8 text-center"
         >
           <div className={`rounded-full px-6 py-2 text-sm font-semibold ${
             passed
@@ -523,7 +589,7 @@ export default function Dashboard() {
             {passed ? "You survived the tank." : "The sharks ate you alive."}
           </h1>
 
-          <div className="grid w-full max-w-sm gap-4 rounded-xl border p-6">
+          <div className="grid w-full gap-4 rounded-xl border p-6">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Raised</span>
               <span className="font-mono text-sm font-semibold">
@@ -566,21 +632,125 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Performance Metrics */}
+          <div className="grid w-full gap-4">
+            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+              Performance Analysis
+            </p>
+            {metrics.map((m, i) => {
+              const points = m.timeline;
+              const min = Math.min(...points) - 5;
+              const max = Math.max(...points) + 5;
+              const w = 280;
+              const h = 60;
+              const coords = points.map((p, idx) => ({
+                x: (idx / (points.length - 1)) * w,
+                y: h - ((p - min) / (max - min)) * h,
+              }));
+              // Smooth cubic bezier catmull-rom style
+              let pathD = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+              for (let idx = 1; idx < coords.length; idx++) {
+                const prev = coords[idx - 1];
+                const curr = coords[idx];
+                const next = coords[Math.min(idx + 1, coords.length - 1)];
+                const prevPrev = coords[Math.max(idx - 2, 0)];
+                const cp1x = prev.x + (curr.x - prevPrev.x) / 6;
+                const cp1y = prev.y + (curr.y - prevPrev.y) / 6;
+                const cp2x = curr.x - (next.x - prev.x) / 6;
+                const cp2y = curr.y - (next.y - prev.y) / 6;
+                pathD += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+              }
+              const areaD = pathD + ` L ${w} ${h} L 0 ${h} Z`;
+
+              return (
+                <motion.div
+                  key={m.label}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 * i }}
+                  className="group rounded-xl border p-4 text-left transition-colors hover:border-primary/30 hover:bg-primary/[0.02]"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">{m.label}</span>
+                    <span className="font-mono text-sm font-semibold text-primary">
+                      {m.score}%
+                    </span>
+                  </div>
+                  <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <motion.div
+                      className="h-full rounded-full bg-primary"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${m.score}%` }}
+                      transition={{ duration: 0.8, delay: 0.2 + 0.1 * i }}
+                    />
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {getCommentary(m, i)}
+                  </p>
+
+                  {/* Timeline graph — visible on hover */}
+                  <div className="mt-3 grid h-0 overflow-hidden opacity-0 transition-all duration-300 group-hover:h-[100px] group-hover:opacity-100">
+                    <div className="flex items-end gap-2">
+                      <svg
+                        viewBox={`0 0 ${w} ${h}`}
+                        className="h-[60px] w-full"
+                        preserveAspectRatio="none"
+                      >
+                        <path
+                          d={areaD}
+                          className="fill-primary/10"
+                        />
+                        <path
+                          d={pathD}
+                          fill="none"
+                          className="stroke-primary"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        {coords.filter((_, idx) => idx % 5 === 0 || idx === coords.length - 1).map((c, idx) => (
+                          <circle
+                            key={idx}
+                            cx={c.x}
+                            cy={c.y}
+                            r="2.5"
+                            className="fill-primary"
+                          />
+                        ))}
+                      </svg>
+                    </div>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[10px] text-muted-foreground">0:00</span>
+                      <span className="text-[10px] text-muted-foreground">1:00</span>
+                      <span className="text-[10px] text-muted-foreground">2:00</span>
+                      <span className="text-[10px] text-muted-foreground">3:00</span>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+
           {finalDecisions && (
-            <div className="grid w-full max-w-sm gap-3">
+            <div className="grid w-full gap-3">
               <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 Investor Decisions
               </p>
               {finalDecisions.map((d, i) => (
                 <div key={i} className="flex items-center justify-between rounded-lg border px-4 py-3">
-                  <div>
+                  <div className="text-left">
                     <p className="text-sm font-medium">{d.investor}</p>
                     {d.reason && (
                       <p className="text-xs text-muted-foreground">{d.reason}</p>
                     )}
                   </div>
-                  <span className={`text-xs font-semibold ${d.invest ? "text-emerald-400" : "text-muted-foreground"}`}>
-                    {d.invest ? `$${(d.amount || 0).toLocaleString()}` : "Out"}
+                  <span className={`text-right text-xs font-semibold ${d.invest ? "text-emerald-400" : "text-muted-foreground"}`}>
+                    {d.invest ? (
+                      <span className="flex flex-col items-end">
+                        <span>${(d.amount || 0).toLocaleString()}</span>
+                        {d.equity && <span className="text-[10px] text-muted-foreground">for {d.equity}</span>}
+                      </span>
+                    ) : "Out"}
                   </span>
                 </div>
               ))}
