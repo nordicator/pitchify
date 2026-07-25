@@ -9,53 +9,37 @@ import {
   ChromaticAberration,
 } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, Suspense } from "react";
 import * as THREE from "three";
 import type { Group } from "three";
 
-function JudgeFigure({
+function JudgeModel({
   position,
+  modelPath,
   delay = 0,
-  accentColor = "#3b82f6",
+  scale = 1,
+  rotationY = 0,
 }: {
   position: [number, number, number];
+  modelPath: string;
   delay?: number;
-  accentColor?: string;
+  scale?: number;
+  rotationY?: number;
 }) {
   const ref = useRef<Group>(null);
+  const { scene } = useGLTF(modelPath);
 
   useFrame((state) => {
     if (ref.current) {
       const t = state.clock.elapsedTime;
-      ref.current.rotation.y = Math.sin(t * 0.4 + delay) * 0.08;
-      ref.current.position.y = position[1] + Math.sin(t * 0.6 + delay) * 0.02;
+      ref.current.rotation.y = rotationY + Math.sin(t * 0.4 + delay) * 0.05;
+      ref.current.position.y = position[1] + Math.sin(t * 0.6 + delay) * 0.015;
     }
   });
 
   return (
     <group ref={ref} position={position}>
-      {/* Body — cone */}
-      <mesh position={[0, 0.55, 0]}>
-        <coneGeometry args={[0.35, 1.1, 8]} />
-        <meshStandardMaterial
-          color={accentColor}
-          metalness={0.3}
-          roughness={0.5}
-          emissive={accentColor}
-          emissiveIntensity={0.1}
-        />
-      </mesh>
-      {/* Head — sphere */}
-      <mesh position={[0, 1.3, 0]}>
-        <sphereGeometry args={[0.2, 16, 16]} />
-        <meshStandardMaterial
-          color={accentColor}
-          metalness={0.3}
-          roughness={0.5}
-          emissive={accentColor}
-          emissiveIntensity={0.1}
-        />
-      </mesh>
+      <primitive object={scene} scale={scale} />
     </group>
   );
 }
@@ -71,6 +55,10 @@ function JudgeChair({ position }: { position: [number, number, number] }) {
 }
 
 useGLTF.preload("/chair.glb");
+useGLTF.preload("/1.glb");
+useGLTF.preload("/2.glb");
+useGLTF.preload("/3.glb");
+useGLTF.preload("/4.glb");
 
 
 function SpotlightCone({
@@ -263,13 +251,15 @@ export function JudgesScene() {
   const judges: {
     pos: [number, number, number];
     chairPos: [number, number, number];
-    color: string;
+    model: string;
+    scale: number;
+    rotationY: number;
     delay: number;
   }[] = [
-    { pos: [-2.2, 0, 0], chairPos: [-2.2, 0, 0], color: "#e63946", delay: 0 },
-    { pos: [-0.75, 0, 0.3], chairPos: [-0.75, 0, 0.3], color: "#2a9d8f", delay: 1 },
-    { pos: [0.75, 0, 0.3], chairPos: [0.75, 0, 0.3], color: "#e9c46a", delay: 2 },
-    { pos: [2.2, 0, 0], chairPos: [2.2, 0, 0], color: "#3b82f6", delay: 3 },
+    { pos: [-2.2, 0.65, 0], chairPos: [-2.2, 0, 0], model: "/1.glb", scale: 0.9, rotationY: 0.2, delay: 0 },
+    { pos: [-0.75, 0.65, 0.3], chairPos: [-0.75, 0, 0.3], model: "/2.glb", scale: 0.9, rotationY: 0.1, delay: 1 },
+    { pos: [0.75, 0.65, 0.3], chairPos: [0.75, 0, 0.3], model: "/3.glb", scale: 0.9, rotationY: -0.1, delay: 2 },
+    { pos: [2.2, 0.65, 0], chairPos: [2.2, 0, 0], model: "/4.glb", scale: 0.9, rotationY: -0.2, delay: 3 },
   ];
 
   return (
@@ -320,13 +310,20 @@ export function JudgesScene() {
       <SpotlightCone position={[-2.5, 2.5, 0.5]} color="#ffeedd" />
       <SpotlightCone position={[2.5, 2.5, 0.5]} color="#ffeedd" />
 
-      {/* Judge figures and chairs */}
-      {judges.map((j, i) => (
-        <group key={i}>
-          <JudgeChair position={j.chairPos} />
-          <JudgeFigure position={[j.pos[0], j.pos[1] + 0.5, j.pos[2]]} delay={j.delay} accentColor={j.color} />
-        </group>
-      ))}
+      {/* Judge models and chairs */}
+      <Suspense fallback={null}>
+        {judges.map((j, i) => (
+          <group key={i}>
+            <JudgeModel
+              position={j.pos}
+              modelPath={j.model}
+              scale={j.scale}
+              rotationY={j.rotationY}
+              delay={j.delay}
+            />
+          </group>
+        ))}
+      </Suspense>
 
       {/* Post-processing */}
       <EffectComposer>

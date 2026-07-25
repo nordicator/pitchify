@@ -29,7 +29,10 @@ export function useTTS(onPlayStart?: () => void, onPlayEnd?: () => void) {
           URL.revokeObjectURL(url);
           resolve();
         };
-        audio.play();
+        audio.play().catch(() => {
+          URL.revokeObjectURL(url);
+          resolve();
+        });
       });
     } catch {
       // TTS failure is non-fatal
