@@ -68,7 +68,7 @@ def _generate_product_image(product_name: str, description: str) -> str:
             "Modern, professional product photography style on a clean white/gradient background. No text."
         )
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp-image-generation",
+            model="gemini-3.1-flash-image",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],

@@ -7,6 +7,6 @@ const JudgesScene = dynamic(
   { ssr: false },
 );
 
-export function JudgesSceneLoader() {
-  return <JudgesScene />;
+export function JudgesSceneLoader({ talkingIndex }: { talkingIndex?: number }) {
+  return <JudgesScene talkingIndex={talkingIndex} />;
 }

@@ -42,7 +42,7 @@ Your goal is to create a realistic but engaging startup pitch experience where t
 INVESTORS
 ========================
 
-### The Doubter
+### Shreyas Rao (The Doubter)
 
 Role:
 The investor who searches for reasons the startup could fail.
@@ -66,7 +66,7 @@ Mindset:
 
 ---
 
-### The Builder
+### Conrad Mo (The Builder)
 
 Role:
 The technical investor.
@@ -90,7 +90,7 @@ Mindset:
 
 ---
 
-### The Money Guy
+### James Liang (The Money Guy)
 
 Role:
 The business investor.
@@ -115,7 +115,7 @@ Mindset:
 
 ---
 
-### The Competitor
+### Samuel Tjhia (The Competitor)
 
 Role:
 The market-focused investor.
@@ -284,25 +284,25 @@ Do NOT ask questions just to fill the limit.
 QUESTION TOPICS
 ========================
 
-Builder:
+Conrad Mo:
 - How the product is built.
 - Technical challenges.
 - AI implementation.
 - Scalability.
 
-Money Guy:
+James Liang:
 - Revenue.
 - Pricing.
 - Customers.
 - Growth.
 - Profitability.
 
-Competitor:
+Samuel Tjhia:
 - Competition.
 - Differentiation.
 - Defensibility.
 
-Doubter:
+Shreyas Rao:
 - Risks.
 - Assumptions.
 - Evidence.
@@ -331,19 +331,19 @@ Avoid:
 
 Examples:
 
-Money Guy:
+James Liang:
 "How do you make money?"
 "Who is your first customer?"
 
-Builder:
+Conrad Mo:
 "How will you build this?"
 "What is the hardest technical problem?"
 
-Competitor:
+Samuel Tjhia:
 "Why will customers choose you?"
 "What stops competitors copying you?"
 
-Doubter:
+Shreyas Rao:
 "What proof do you have?"
 "What is your biggest risk?"
 
@@ -410,7 +410,7 @@ Format:
 
 [
   {
-    "investor": "Money Guy",
+    "investor": "James Liang",
     "text": "How do you make money?"
   }
 ]
@@ -599,7 +599,7 @@ When the server requests decisions, return ONLY:
   "final": true,
   "decisions": [
     {
-      "investor": "Doubter",
+      "investor": "Shreyas Rao",
       "invest": false,
       "amount": 0,
       "equity": "0%",
@@ -607,7 +607,7 @@ When the server requests decisions, return ONLY:
       "reason": "The customer demand is not proven enough."
     },
     {
-      "investor": "Builder",
+      "investor": "Conrad Mo",
       "invest": true,
       "amount": 150000,
       "equity": "15%",
@@ -615,7 +615,7 @@ When the server requests decisions, return ONLY:
       "reason": "The product seems technically achievable."
     },
     {
-      "investor": "Money Guy",
+      "investor": "James Liang",
       "invest": true,
       "amount": 40000,
       "equity": "45%",
@@ -623,7 +623,7 @@ When the server requests decisions, return ONLY:
       "reason": "The idea is risky but has potential."
     },
     {
-      "investor": "Competitor",
+      "investor": "Samuel Tjhia",
       "invest": false,
       "amount": 0,
       "equity": "0%",
@@ -747,7 +747,7 @@ def _get_investor_response_sync(history: list, transcript: str, context: dict, m
                 clean = re.sub(r'[{}\[\]":]', '', raw).strip()
                 if clean:
                     log.warning(f"JSON parse failed, using fallback text | error={parse_err} | clean={clean[:80]!r}")
-                    return [{"investor": "Doubter", "text": clean}]
+                    return [{"investor": "Shreyas Rao", "text": clean}]
                 raise ValueError("Empty response from model")
         except Exception as e:
             last_error = e

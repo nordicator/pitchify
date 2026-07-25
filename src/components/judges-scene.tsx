@@ -19,12 +19,14 @@ function JudgeModel({
   delay = 0,
   scale = 1,
   rotationY = 0,
+  isTalking = false,
 }: {
   position: [number, number, number];
   modelPath: string;
   delay?: number;
   scale?: number;
   rotationY?: number;
+  isTalking?: boolean;
 }) {
   const ref = useRef<Group>(null);
   const { scene } = useGLTF(modelPath);
@@ -33,7 +35,9 @@ function JudgeModel({
     if (ref.current) {
       const t = state.clock.elapsedTime;
       ref.current.rotation.y = rotationY + Math.sin(t * 0.4 + delay) * 0.05;
-      ref.current.position.y = position[1] + Math.sin(t * 0.6 + delay) * 0.015;
+      const bobAmount = isTalking ? 0.06 : 0.015;
+      const bobSpeed = isTalking ? 3.5 : 0.6;
+      ref.current.position.y = position[1] + Math.sin(t * bobSpeed + delay) * bobAmount;
     }
   });
 
@@ -247,7 +251,7 @@ function ContextLossHandler() {
   return null;
 }
 
-export function JudgesScene() {
+export function JudgesScene({ talkingIndex }: { talkingIndex?: number }) {
   const judges: {
     pos: [number, number, number];
     chairPos: [number, number, number];
@@ -320,6 +324,7 @@ export function JudgesScene() {
               scale={j.scale}
               rotationY={j.rotationY}
               delay={j.delay}
+              isTalking={talkingIndex === i}
             />
           </group>
         ))}

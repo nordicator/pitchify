@@ -211,6 +211,7 @@ export default function Dashboard() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [talkingJudge, setTalkingJudge] = useState<number | undefined>(undefined);
   const [finalDecisions, setFinalDecisions] = useState<InvestorDecision[] | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -261,6 +262,7 @@ export default function Dashboard() {
 
   const onProcessing = useCallback(() => {
     setIsProcessing(true);
+    setTalkingJudge(Math.floor(Math.random() * 4));
   }, []);
 
   const sendEndSessionRef = useRef<() => void>(() => {});
@@ -272,9 +274,16 @@ export default function Dashboard() {
       closingPhrases.some((p) => m.text.toLowerCase().includes(p))
     );
 
-    for (const msg of messages) {
+    const lastIdx = messages.length - 1;
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const isLast = i === lastIdx;
       ttsEnqueue(msg.text, () => {
         setTranscript((prev) => [...prev, { speaker: msg.investor, text: msg.text }]);
+        setTalkingJudge(Math.floor(Math.random() * 4));
+        if (isLast) {
+          setTimeout(() => setTalkingJudge(undefined), 3000);
+        }
       });
     }
 
@@ -583,11 +592,11 @@ export default function Dashboard() {
       m.commentary[(seed + idx) % m.commentary.length];
 
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
+      <div className="min-h-screen overflow-y-auto py-12 px-6">
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="flex w-full max-w-lg flex-col items-center gap-8 text-center"
+          className="mx-auto flex w-full max-w-2xl flex-col items-center gap-8 text-center"
         >
           <div className={`rounded-full px-6 py-2 text-sm font-semibold ${
             passed
@@ -601,38 +610,36 @@ export default function Dashboard() {
             {passed ? "You survived the tank." : "The sharks ate you alive."}
           </h1>
 
-          <div className="grid w-full gap-4 rounded-xl border p-6">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Raised</span>
-              <span className="font-mono text-sm font-semibold">
+          <div className="grid w-full grid-cols-2 gap-4 rounded-xl border p-6 sm:grid-cols-3">
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-xs text-muted-foreground">Raised</span>
+              <span className="font-mono text-lg font-semibold">
                 ${raised.toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Goal</span>
-              <span className="font-mono text-sm font-semibold">
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-xs text-muted-foreground">Goal</span>
+              <span className="font-mono text-lg font-semibold">
                 ${goalRaise.toLocaleString()}
               </span>
             </div>
-            <div className="h-px bg-border" />
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Equity given</span>
-              <span className={`font-mono text-sm font-semibold ${
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-xs text-muted-foreground">Equity Given</span>
+              <span className={`font-mono text-lg font-semibold ${
                 !withinEquity ? "text-destructive" : ""
               }`}>
                 {equityGiven}%
               </span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Equity limit</span>
-              <span className="font-mono text-sm font-semibold">
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-xs text-muted-foreground">Equity Limit</span>
+              <span className="font-mono text-lg font-semibold">
                 {goalEquity}%
               </span>
             </div>
-            <div className="h-px bg-border" />
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Result</span>
-              <span className={`font-mono text-sm font-semibold ${
+            <div className="col-span-2 flex flex-col items-center gap-1 sm:col-span-2">
+              <span className="text-xs text-muted-foreground">Result</span>
+              <span className={`font-mono text-lg font-semibold ${
                 passed ? "text-emerald-400" : "text-destructive"
               }`}>
                 {goalMet && !withinEquity
@@ -748,24 +755,32 @@ export default function Dashboard() {
               <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 Investor Decisions
               </p>
-              {finalDecisions.map((d, i) => (
-                <div key={i} className="flex items-center justify-between rounded-lg border px-4 py-3">
-                  <div className="text-left">
-                    <p className="text-sm font-medium">{d.investor}</p>
-                    {d.reason && (
-                      <p className="text-xs text-muted-foreground">{d.reason}</p>
-                    )}
-                  </div>
-                  <span className={`text-right text-xs font-semibold ${d.invest ? "text-emerald-400" : "text-muted-foreground"}`}>
-                    {d.invest ? (
-                      <span className="flex flex-col items-end">
-                        <span>${(d.amount || 0).toLocaleString()}</span>
-                        {d.equity && <span className="text-[10px] text-muted-foreground">for {d.equity}</span>}
+              <div className="grid gap-3 sm:grid-cols-2">
+                {finalDecisions.map((d, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 * i }}
+                    className={`rounded-xl border p-4 text-left ${d.invest ? "border-emerald-500/30 bg-emerald-500/5" : ""}`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold">{d.investor}</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${d.invest ? "bg-emerald-500/20 text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+                        {d.invest ? "IN" : "OUT"}
                       </span>
-                    ) : "Out"}
-                  </span>
-                </div>
-              ))}
+                    </div>
+                    {d.invest && (
+                      <p className="mb-1 font-mono text-sm font-semibold text-emerald-400">
+                        ${(d.amount || 0).toLocaleString()} for {d.equity}
+                      </p>
+                    )}
+                    {d.reason && (
+                      <p className="text-xs leading-relaxed text-muted-foreground">{d.reason}</p>
+                    )}
+                  </motion.div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1067,7 +1082,7 @@ export default function Dashboard() {
         <div className="flex flex-1 overflow-hidden">
           {/* Main scene — judges 3D */}
           <main className="relative flex-1 bg-black">
-            <JudgesSceneLoader />
+            <JudgesSceneLoader talkingIndex={talkingJudge} />
 
             {/* Time alert */}
             <AnimatePresence>
