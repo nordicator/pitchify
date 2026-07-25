@@ -14,7 +14,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Badge } from "@/components/ui/badge";
+import { JudgesSceneLoader } from "@/components/judges-scene-loader";
 
 type Mode = "generate" | "custom";
 
@@ -58,83 +58,114 @@ export default function Dashboard() {
   const canLaunch =
     mode === "generate" || (mode === "custom" && customIdea.trim().length > 0);
 
+  const placeholderTranscript = [
+    { speaker: "You", text: "We're building an AI-powered tool that helps sales teams practice their pitches before real calls." },
+    { speaker: "The Skeptic", text: "So it's a role-play simulator. How is this different from having a colleague run through it with you?" },
+    { speaker: "You", text: "Three things — it's available 24/7, it gives structured feedback on specific metrics, and it adapts to the buyer persona you're selling to." },
+    { speaker: "Mr. Wonderful", text: "What do you charge per seat?" },
+    { speaker: "You", text: "$49 per user per month, with team plans starting at $399 for ten seats." },
+    { speaker: "The Operator", text: "What's your current ARR and how many paying teams do you have?" },
+  ];
+
   if (sessionStarted) {
     return (
-      <div className="flex min-h-screen flex-col">
-        <header className="flex items-center justify-between border-b px-6 py-4">
-          <div className="flex items-center gap-2">
-            <Link
-              href="/"
-              className="font-mono text-sm font-medium tracking-tight transition-colors hover:text-primary"
-            >
-              pitchify
-            </Link>
-            <span className="text-muted-foreground">/</span>
-            <span className="font-mono text-sm text-muted-foreground">
-              session
-            </span>
-          </div>
-          <Badge variant="outline" className="gap-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-            Live
-          </Badge>
+      <div className="flex h-screen flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center border-b px-6 py-4">
+          <Link
+            href="/"
+            className="font-mono text-sm font-medium tracking-tight transition-colors hover:text-primary"
+          >
+            pitchify
+          </Link>
+          <span className="mx-2 text-muted-foreground">/</span>
+          <span className="font-mono text-sm text-muted-foreground">
+            session
+          </span>
         </header>
 
-        <main className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-sm text-muted-foreground"
-          >
-            {mode === "generate"
-              ? "Pitching a generated product idea"
-              : customIdea}
-          </motion.p>
+        <div className="flex flex-1 overflow-hidden">
+          {/* Main scene — judges 3D */}
+          <main className="relative flex-1 bg-black">
+            <JudgesSceneLoader />
 
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 }}
-            className="relative w-full max-w-4xl overflow-hidden rounded-xl border bg-black"
-          >
-            {cameraError ? (
-              <div className="flex h-[560px] flex-col items-center justify-center gap-3">
-                <p className="text-sm text-muted-foreground">{cameraError}</p>
-              </div>
-            ) : (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="h-[560px] w-full object-cover"
-              />
-            )}
-            {!cameraReady && !cameraError && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                <div className="size-5 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Requesting camera access...
-                </p>
-              </div>
-            )}
-          </motion.div>
+            {/* Mini webcam — top right */}
+            <div className="absolute top-4 right-4 z-10 h-[120px] w-[160px] overflow-hidden rounded-lg border border-white/10 bg-black shadow-lg">
+              {cameraError ? (
+                <div className="flex h-full items-center justify-center">
+                  <p className="px-2 text-center text-[10px] text-muted-foreground">
+                    {cameraError}
+                  </p>
+                </div>
+              ) : (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+              )}
+              {!cameraReady && !cameraError && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-foreground" />
+                </div>
+              )}
+            </div>
+          </main>
 
-          <Button
-            variant="ghost"
-            onClick={() => {
-              if (videoRef.current?.srcObject) {
-                const stream = videoRef.current.srcObject as MediaStream;
-                stream.getTracks().forEach((track) => track.stop());
-              }
-              setSessionStarted(false);
-              setCameraReady(false);
-              setCameraError(null);
-            }}
-          >
-            End session
-          </Button>
-        </main>
+          {/* Transcript — right side */}
+          <aside className="flex w-[380px] shrink-0 flex-col border-l">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <p className="text-sm font-medium">Transcript</p>
+              <p className="font-mono text-xs text-muted-foreground">
+                {placeholderTranscript.length} messages
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <div className="grid gap-4">
+                {placeholderTranscript.map((msg, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.08 }}
+                  >
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {msg.speaker}
+                    </p>
+                    <p className="mt-1 text-sm leading-relaxed">
+                      {msg.text}
+                    </p>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+            <div className="shrink-0 border-t p-4">
+              <Button
+                variant="destructive"
+                className="w-full"
+                onClick={() => {
+                  if (videoRef.current?.srcObject) {
+                    const stream = videoRef.current.srcObject as MediaStream;
+                    stream.getTracks().forEach((track) => track.stop());
+                  }
+                  setSessionStarted(false);
+                  setCameraReady(false);
+                  setCameraError(null);
+                }}
+              >
+                <svg
+                  className="size-4"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
+                End session
+              </Button>
+            </div>
+          </aside>
+        </div>
       </div>
     );
   }
