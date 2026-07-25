@@ -1,8 +1,8 @@
+google-genai>=2.14.0
+fastapi>=0.140.0
+uvicorn>=0.51.0
+python-dotenv>=1.2.2
 numpy
 # pyaudio
 torch
 silero_vad
-google-genai 
-python-dotenv 
-gradio 
-pillow

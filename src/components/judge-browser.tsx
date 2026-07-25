@@ -6,34 +6,28 @@ import { cn } from "@/lib/utils";
 
 const judges = [
   {
-    name: "Mr. Wonderful",
-    philosophy: "Every dollar has a job. If your unit economics don't work at scale, you don't have a business — you have a hobby.",
-    lookFor: "Royalty deals, proven revenue, capital efficiency",
-    killShot: "What are your customer acquisition costs?",
+    name: "James Liang",
+    philosophy: "Money tames the beast, money is peace, money is civilization, the end of the story is... money",
+    lookFor: "Cares about the financial aspects of your pitch",
+    killShot: "How would your profit margins look like if you scaled this?",
   },
   {
-    name: "The Operator",
-    philosophy: "Ideas are worthless. Execution is everything. Show me the team that's shipped before and I'll show you my checkbook.",
-    lookFor: "Operational excellence, repeatable processes, team depth",
+    name: "Conrad Mo",
+    philosophy: "Without proper execution and supply chain management, ideas are useless",
+    lookFor: "Cares about the logistical aspects of your pitch",
     killShot: "Walk me through last Tuesday at your company.",
   },
   {
-    name: "The Visionary",
-    philosophy: "I don't invest in products — I invest in market shifts. If you're not riding a wave that's bigger than you, I'm bored.",
-    lookFor: "TAM expansion, timing arguments, category creation",
+    name: "Shreyas Rao",
+    philosophy: "To create wealth, you must create something people want",
+    lookFor: "Cares about the breadth of your pitch",
     killShot: "Why does this need to exist right now?",
   },
   {
-    name: "The Skeptic",
-    philosophy: "My job is to find the lie you're telling yourself. Every founder has one. The good ones know what theirs is.",
-    lookFor: "Intellectual honesty, stress-tested assumptions, risk awareness",
-    killShot: "What's the most likely way this fails?",
-  },
-  {
-    name: "The Closer",
-    philosophy: "A deal that takes too long to close is a deal that shouldn't close. Speed is a signal of conviction.",
-    lookFor: "Clear terms, decisive founders, momentum",
-    killShot: "If I offer you 20% less right now, do you take it?",
+    name: "Samuel Tjhia",
+    philosophy: "I don't invest in the product, rather I invest in the people",
+    lookFor: "Cares about the characteristics of your pitch",
+    killShot: "Does this founder truly care?",
   },
 ];
 
@@ -83,7 +77,7 @@ export function JudgeBrowser() {
               &ldquo;{judge.philosophy}&rdquo;
             </blockquote>
             <p className="mt-4 text-sm text-muted-foreground">
-              Looks for: {judge.lookFor}
+              • {judge.lookFor}
             </p>
           </div>
 

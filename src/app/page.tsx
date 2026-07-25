@@ -6,23 +6,39 @@ import { cn } from "@/lib/utils";
 
 export default function Home() {
   return (
-    <div className="flex min-h-screen flex-col">
-      {/* Nav */}
-      <nav className="flex items-center justify-between px-6 py-5 md:px-12">
-        <span className="font-mono text-sm font-semibold tracking-tight">
-          pitchify
-        </span>
-        <Link
-          href="/dashboard"
-          className={cn(buttonVariants({ size: "sm" }))}
-        >
-          Start pitching
-        </Link>
-      </nav>
+    <div className="flex min-h-screen flex-col bg-gradient-to-b from-black via-slate-950 to-blue-950 text-foreground">
+      {/* Navbar */}
+      <header className="sticky top-0 z-50 w-full border-b border-white/10 bg-black/50 backdrop-blur-md px-6 py-4 md:px-12">
+        <div className="mx-auto flex max-w-6xl items-center justify-between">
+          <Link href="/" className="flex items-center">
+            <img
+              src="/logo.png"
+              alt="Pitchify"
+              className="h-10 w-auto object-contain"
+            />
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="#judges"
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "sm" }),
+              )}
+            >
+              Meet the judges
+            </Link>
+            <Link
+              href="/dashboard"
+              className={cn(buttonVariants({ size: "sm" }))}
+            >
+              Enter the tank
+            </Link>
+          </div>
+        </div>
+      </header>
 
       {/* Hero */}
-      <section className="flex flex-1 flex-col items-center px-6 pt-16 md:pt-28">
-        <div className="flex w-full max-w-6xl flex-col items-center gap-16 lg:flex-row lg:items-center">
+      <section className="flex flex-1 flex-col items-center px-6 pt-10 md:px-12 md:pt-16">
+        <div className="flex w-full max-w-6xl flex-col items-center gap-12 lg:flex-row lg:items-center lg:gap-16">
           {/* Left */}
           <div className="flex-1 text-center lg:text-left">
             <h1 className="text-4xl font-bold leading-[1.08] tracking-tight md:text-6xl lg:text-[4.25rem]">
@@ -33,7 +49,7 @@ export default function Home() {
               <span className="italic">go easy.</span>
             </h1>
             <p className="mx-auto mt-8 max-w-md text-base leading-relaxed text-muted-foreground lg:mx-0">
-              Five AI investors with distinct philosophies. They remember every
+              Four AI investors with distinct philosophies. They remember every
               number, catch every contradiction, and won&apos;t pretend to be
               impressed.
             </p>
@@ -64,12 +80,12 @@ export default function Home() {
 
       {/* Judges — interactive browser */}
       <section id="judges" className="px-6 py-32 md:px-12">
-        <div className="mx-auto max-w-4xl">
+        <div className="mx-auto max-w-6xl">
           <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
             The panel
           </p>
           <h2 className="mt-2 text-2xl font-bold tracking-tight">
-            Five investors. Five angles.
+            Four investors are presented in front of you
           </h2>
           <div className="mt-10">
             <JudgeBrowser />
@@ -113,9 +129,8 @@ export default function Home() {
                 Get real decisions
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Each judge makes an independent call: invest, counter-offer, or
-                pass. You get a scorecard explaining exactly where you were
-                strong and where you lost them.
+                Each judge asks you questions, to test the integrity of your
+                idea, then gives you an offer.
               </p>
             </div>
           </div>

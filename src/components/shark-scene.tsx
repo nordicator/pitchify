@@ -1,14 +1,12 @@
 "use client";
 
 import { Canvas, useFrame } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
 import { useRef, useState } from "react";
 import type { Group } from "three";
 
 function Shark() {
   const groupRef = useRef<Group>(null);
   const [hovered, setHovered] = useState(false);
-  const { scene } = useGLTF("/shark.glb");
 
   useFrame((state) => {
     if (!groupRef.current) return;
@@ -25,12 +23,37 @@ function Shark() {
       onPointerOver={() => setHovered(true)}
       onPointerOut={() => setHovered(false)}
     >
-      <primitive object={scene} />
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[1.8, 0.55, 0.65]} />
+        <meshStandardMaterial color={hovered ? "#5fa7ff" : "#2f5d96"} />
+      </mesh>
+      <mesh position={[1.05, 0, 0]} castShadow receiveShadow>
+        <sphereGeometry args={[0.34, 24, 24]} />
+        <meshStandardMaterial color={hovered ? "#4d89e6" : "#3f73b5"} />
+      </mesh>
+      <mesh position={[-0.7, 0.08, 0]} rotation={[0, 0, Math.PI / 6]} castShadow receiveShadow>
+        <boxGeometry args={[0.6, 0.16, 0.22]} />
+        <meshStandardMaterial color="#142f57" />
+      </mesh>
+      <mesh position={[-0.85, -0.02, 0]} rotation={[0, 0, Math.PI / 2]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.05, 0.08, 0.3, 12]} />
+        <meshStandardMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[0.16, 0.16, 0.35]} rotation={[0, Math.PI / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, 0.1, 0.18]} />
+        <meshStandardMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[0.16, 0.16, -0.35]} rotation={[0, Math.PI / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.12, 0.1, 0.18]} />
+        <meshStandardMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[-0.3, -0.18, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.18, 0.2, 0.18]} />
+        <meshStandardMaterial color="#0f172a" />
+      </mesh>
     </group>
   );
 }
-
-useGLTF.preload("/shark.glb");
 
 export default function SharkScene() {
   return (
