@@ -1,16 +1,17 @@
 """
-Gemini multi-turn conversation management for the investor panel.
-Each session holds a persistent chat with Gemini maintaining full context.
+Session handler: receives transcribed text from browser Web Speech API,
+returns investor panel text response from Gemini.
 """
 
-import os
-import uuid
+import asyncio
 import json
+import os
+import re
+import time
 from google import genai
 from google.genai import types
 
 _client = None
-_sessions: dict[str, object] = {}
 
 
 def _get_client():
@@ -19,7 +20,9 @@ def _get_client():
         _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return _client
 
-SYSTEM_PROMPT = """You are simulating a live startup investor pitch meeting.
+
+SYSTEM_PROMPT = """\
+You are simulating a live startup investor pitch meeting.
 
 The user is the founder pitching their startup idea.
 
@@ -603,73 +606,118 @@ Investment decisions should consider:
 Return valid JSON only."""
 
 
-def create_session(context: dict) -> str:
-    session_id = str(uuid.uuid4())
+def _extract_json(text: str):
+    """Extract JSON from model response, stripping any markdown fences."""
+    text = text.strip()
+    text = re.sub(r'^```(?:json)?\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+    return json.loads(text)
 
-    # Inject pitch context into opening system message
-    context_msg = (
-        f"Fundraising goal: ${context['fundraising_goal']:,}\n"
-        f"Startup: {context['startup_description']}\n"
-        f"Pitch summary: {context.get('pitch_summary', '')}"
+
+def _get_investor_response(history: list, transcript: str, context: dict, max_retries: int = 3):
+    """Returns parsed JSON (list or dict) from Gemini with retry on transient errors."""
+    client = _get_client()
+    goal = context["fundraising_goal"]
+    description = context["startup_description"]
+    summary = context.get("pitch_summary", description)
+
+    system = (
+        SYSTEM_PROMPT
+        + f"\n\n========================\nTHE STARTUP BEING PITCHED\n========================\n"
+        + f"Fundraising goal: ${goal:,}\n"
+        + f"Description: {description}\n"
+        + f"Summary: {summary}"
     )
 
-    chat = _get_client().aio.chats.create(
-        model="gemini-3.5-flash",
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT + "\n\n---\nPitch context:\n" + context_msg,
-        ),
-    )
+    messages = history + [{"role": "user", "parts": [{"text": transcript}]}]
 
-    _sessions[session_id] = {"chat": chat, "context": context, "ended": False}
-    return session_id
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.9,
+                ),
+                contents=messages,
+            )
+            raw = (response.text or "").strip()
+            try:
+                return _extract_json(raw)
+            except (json.JSONDecodeError, ValueError):
+                return [{"investor": "Doubter", "text": raw}]
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+            is_transient = any(code in error_str for code in ["503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED"])
+            if not is_transient:
+                raise
+            wait = (2 ** attempt) + 0.5
+            print(f"[session] Gemini {error_str[:80]}... retrying in {wait:.1f}s (attempt {attempt + 1}/{max_retries})")
+            time.sleep(wait)
+
+    raise last_error
 
 
-async def send_message(session_id: str, message: str):
-    session = _sessions.get(session_id)
-    if session is None:
-        return None
+async def run_live_session(session_id: str, context: dict, browser_ws):
+    history = []
 
-    chat = session["chat"]
-    response = await chat.send_message(message)
-    text = response.text.strip()
+    await browser_ws.send_text(json.dumps({
+        "type": "status",
+        "text": "Connected. Press mic and introduce your startup.",
+    }))
 
-    # Try parsing as JSON for structured investor responses
     try:
-        parsed = json.loads(text)
-        return parsed
-    except (json.JSONDecodeError, ValueError):
-        # Return raw text if not valid JSON
-        return {"raw": text}
+        while True:
+            data = await browser_ws.receive()
+            if data["type"] == "websocket.disconnect":
+                break
+            if "text" not in data or not data["text"]:
+                continue
 
+            msg = json.loads(data["text"])
 
-async def end_session(session_id: str):
-    session = _sessions.get(session_id)
-    if session is None:
-        return None
+            if msg.get("type") == "transcript":
+                transcript = msg["text"].strip()
+                if not transcript:
+                    continue
 
-    if session["ended"]:
-        return session.get("result")
+                print(f"[session] founder: {transcript}")
+                await browser_ws.send_text(json.dumps({"type": "processing"}))
 
-    chat = session["chat"]
-    response = await chat.send_message(
-        "The founder has finished their pitch. Please deliver final investment decisions now."
-    )
-    text = response.text.strip()
+                response_data = _get_investor_response(history, transcript, context)
+                print(f"[session] investor: {json.dumps(response_data)[:120]}")
 
-    try:
-        result = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        result = {"raw": text}
+                history.append({"role": "user", "parts": [{"text": transcript}]})
+                history.append({"role": "model", "parts": [{"text": json.dumps(response_data)}]})
 
-    goal = session["context"]["fundraising_goal"]
-    if isinstance(result, dict) and result.get("final"):
-        total = sum(d.get("amount", 0) for d in result.get("decisions", []))
-        result["total_raised"] = total
-        result["goal"] = goal
-        result["goal_reached"] = total >= goal
+                # Check if final decision
+                if isinstance(response_data, dict) and response_data.get("final"):
+                    await browser_ws.send_text(json.dumps({
+                        "type": "final_decision",
+                        "data": response_data,
+                    }))
+                else:
+                    await browser_ws.send_text(json.dumps({
+                        "type": "investor_response",
+                        "data": response_data,
+                    }))
 
-    session["ended"] = True
-    session["result"] = result
+            elif msg.get("type") == "end_session":
+                end_prompt = "Make your final investment decisions now."
+                response_data = _get_investor_response(history, end_prompt, context)
+                await browser_ws.send_text(json.dumps({
+                    "type": "final_decision",
+                    "data": response_data,
+                }))
 
-    del _sessions[session_id]
-    return result
+    except Exception as e:
+        print(f"[session] error: {e}")
+        try:
+            await browser_ws.send_text(json.dumps({
+                "type": "error",
+                "text": "Investor panel temporarily unavailable. Please try again.",
+            }))
+        except Exception:
+            pass

@@ -11,7 +11,7 @@ model = load_silero_vad()
 # 2. Audio Configuration (Silero expects 16kHz mono audio)
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 512  # 512 samples = 32ms chunk at 16kHz
-SILENCE_LIMIT_SEC = 1.0  # Pause duration to consider "done speaking"
+SILENCE_LIMIT_SEC = 2.0  # Pause duration to consider "done speaking"
 SPEECH_THRESHOLD = 0.5  # Probability cutoff for active speech
 
 # State tracking flags
