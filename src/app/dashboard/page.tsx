@@ -70,6 +70,126 @@ type Offer = {
   rawEquity: number;
 };
 
+function PoseOverlay() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const landmarkerRef = useRef<any>(null);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init() {
+      const { PoseLandmarker, FilesetResolver, DrawingUtils } = await import(
+        "@mediapipe/tasks-vision"
+      );
+
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+
+      const landmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+          delegate: "GPU",
+        },
+        runningMode: "VIDEO",
+        numPoses: 1,
+      });
+
+      if (cancelled) return;
+      landmarkerRef.current = landmarker;
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d")!;
+      const drawingUtils = new DrawingUtils(ctx);
+
+      const video = canvas.parentElement?.querySelector("video");
+      if (!video) return;
+
+      const BONES: [number, number][] = [
+        [11, 12], // shoulders
+        [11, 13], [13, 15], // left arm
+        [12, 14], [14, 16], // right arm
+        [11, 23], [12, 24], // torso sides
+        [23, 24], // hips
+      ];
+
+      function detect() {
+        if (cancelled) return;
+        if (video!.readyState >= 2) {
+          canvas!.width = video!.videoWidth;
+          canvas!.height = video!.videoHeight;
+          const result = landmarkerRef.current.detectForVideo(
+            video,
+            performance.now()
+          );
+
+          ctx.clearRect(0, 0, canvas!.width, canvas!.height);
+
+          if (result.landmarks && result.landmarks.length > 0) {
+            const lm = result.landmarks[0];
+            const w = canvas!.width;
+            const h = canvas!.height;
+
+            // Draw bones
+            ctx.strokeStyle = "#00ff88";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#00ff88";
+            ctx.shadowBlur = 6;
+
+            for (const [a, b] of BONES) {
+              const pa = lm[a];
+              const pb = lm[b];
+              if (pa && pb && pa.visibility > 0.5 && pb.visibility > 0.5) {
+                ctx.beginPath();
+                ctx.moveTo(pa.x * w, pa.y * h);
+                ctx.lineTo(pb.x * w, pb.y * h);
+                ctx.stroke();
+              }
+            }
+
+            // Draw joints
+            const jointIndices = [11, 12, 13, 14, 15, 16, 23, 24];
+            ctx.fillStyle = "#00ff88";
+            ctx.shadowBlur = 8;
+            for (const idx of jointIndices) {
+              const p = lm[idx];
+              if (p && p.visibility > 0.5) {
+                ctx.beginPath();
+                ctx.arc(p.x * w, p.y * h, 3, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+            ctx.shadowBlur = 0;
+          }
+        }
+        rafRef.current = requestAnimationFrame(detect);
+      }
+
+      detect();
+    }
+
+    init();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafRef.current);
+      if (landmarkerRef.current) {
+        landmarkerRef.current.close();
+      }
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="pointer-events-none absolute inset-0 h-full w-full"
+    />
+  );
+}
+
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [customIdea, setCustomIdea] = useState("");
@@ -80,7 +200,7 @@ export default function Dashboard() {
   const [generatedPitch, setGeneratedPitch] = useState<GeneratedPitch | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genStep, setGenStep] = useState(0);
-  const [phase, setPhase] = useState<"setup" | "generating" | "briefing" | "launching" | "connecting" | "session" | "summary">("setup");
+  const [phase, setPhase] = useState<"setup" | "generating" | "briefing" | "launching" | "connecting" | "ready" | "session" | "summary">("setup");
   const [offers, setOffers] = useState<Offer[]>([]);
   const [raised, setRaised] = useState(0);
   const [equityGiven, setEquityGiven] = useState(0);
@@ -239,7 +359,7 @@ export default function Dashboard() {
         generatedPitch?.content.description || customIdea;
       const res = await startSession(goalRaise, description);
       setSessionId(res.session_id);
-      setPhase("session");
+      setPhase("ready");
     } catch {
       setPhase("launching");
       setTranscript((prev) => [
@@ -248,6 +368,31 @@ export default function Dashboard() {
       ]);
     }
   }, [goalRaise, generatedPitch, customIdea]);
+
+  // Play smash bros intro with countdown overlay
+  const [countdown, setCountdown] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (phase !== "ready") return;
+    const audio = new Audio("/smash-ready.mp3");
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    timers.push(setTimeout(() => setCountdown("3"), 2000));
+    timers.push(setTimeout(() => setCountdown("2"), 3000));
+    timers.push(setTimeout(() => setCountdown("1"), 4000));
+    timers.push(setTimeout(() => setCountdown("GO!"), 6000));
+    timers.push(setTimeout(() => { setCountdown(null); setPhase("session"); }, 7500));
+
+    audio.play().catch(() => {
+      setCountdown(null);
+      setPhase("session");
+    });
+
+    return () => {
+      audio.pause();
+      timers.forEach(clearTimeout);
+    };
+  }, [phase]);
 
   // Attach stream to video element once session renders
   useEffect(() => {
@@ -643,6 +788,27 @@ export default function Dashboard() {
     );
   }
 
+  if (phase === "ready") {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+        <AnimatePresence mode="wait">
+          {countdown && (
+            <motion.h1
+              key={countdown}
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.5 }}
+              transition={{ duration: 0.3 }}
+              className="text-8xl font-black text-white md:text-[12rem]"
+            >
+              {countdown}
+            </motion.h1>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
   if (phase === "session") {
     return (
       <div className="flex h-screen flex-col overflow-hidden">
@@ -746,13 +912,16 @@ export default function Dashboard() {
                   </p>
                 </div>
               ) : (
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="h-full w-full object-cover"
-                />
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="h-full w-full object-cover"
+                  />
+                  <PoseOverlay />
+                </>
               )}
               {!cameraReady && !cameraError && (
                 <div className="absolute inset-0 flex items-center justify-center">
