@@ -29,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FISH_API_KEY = os.environ.get("FISH_AUDIO_API_KEY", "")
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
 FISH_BASE = "https://api.fish.audio"
 
 # In-memory context store: session_id → context dict
