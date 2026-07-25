@@ -53,11 +53,26 @@ function RollingNumber({ target, duration = 2000 }: { target: number; duration?:
   );
 }
 
+type Offer = {
+  id: number;
+  judge: string;
+  amount: string;
+  equity: string;
+};
+
+const sampleOffers: Offer[] = [
+  { id: 1, judge: "Mr. Wonderful", amount: "$50K", equity: "25%" },
+  { id: 2, judge: "The Visionary", amount: "$250K", equity: "15%" },
+  { id: 3, judge: "The Closer", amount: "$200K", equity: "12%" },
+];
+
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [customIdea, setCustomIdea] = useState("");
   const [phase, setPhase] = useState<"setup" | "launching" | "session">("setup");
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [raised, setRaised] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -149,18 +164,52 @@ export default function Dashboard() {
   if (phase === "session") {
     return (
       <div className="flex h-screen flex-col overflow-hidden">
-        <header className="flex shrink-0 items-center border-b px-6 py-4">
-          <Link
-            href="/"
-            className="font-mono text-sm font-medium tracking-tight transition-colors hover:text-primary"
-          >
-            pitchify
-          </Link>
-          <span className="mx-2 text-muted-foreground">/</span>
-          <span className="font-mono text-sm text-muted-foreground">
-            session
-          </span>
+        <header className="flex shrink-0 items-center justify-between border-b px-6 py-4">
+          <div className="flex items-center">
+            <Link
+              href="/"
+              className="font-mono text-sm font-medium tracking-tight transition-colors hover:text-primary"
+            >
+              pitchify
+            </Link>
+            <span className="mx-2 text-muted-foreground">/</span>
+            <span className="font-mono text-sm text-muted-foreground">
+              session
+            </span>
+          </div>
+          {difficulty && (
+            <div className="flex items-center gap-4 font-mono text-xs">
+              <span className="text-muted-foreground">
+                Goal <span className="font-semibold text-foreground">{difficulties[difficulty].raise}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Equity limit <span className="font-semibold text-foreground">{difficulties[difficulty].equity}</span>
+              </span>
+            </div>
+          )}
         </header>
+
+        {/* Progress bar */}
+        {difficulty && (
+          <div className="shrink-0 border-b px-6 py-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-mono text-xs text-muted-foreground">
+                Raised ${raised.toLocaleString()} of {difficulties[difficulty].raise}
+              </span>
+              <span className="font-mono text-xs text-muted-foreground">
+                {Math.min(Math.round((raised / difficulties[difficulty].raiseNum) * 100), 100)}%
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <motion.div
+                className="h-full rounded-full bg-primary"
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min((raised / difficulties[difficulty].raiseNum) * 100, 100)}%` }}
+                transition={{ type: "spring", stiffness: 100, damping: 20 }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-1 overflow-hidden">
           {/* Main scene — judges 3D */}
@@ -189,6 +238,70 @@ export default function Dashboard() {
                   <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-foreground" />
                 </div>
               )}
+            </div>
+
+            {/* Offer cards — bottom center */}
+            <AnimatePresence>
+              {offers.length > 0 && (
+                <div className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 gap-3">
+                  {offers.map((offer, i) => (
+                    <motion.div
+                      key={offer.id}
+                      initial={{ opacity: 0, y: 40, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                      transition={{ delay: i * 0.1 }}
+                      className="flex flex-col gap-2 rounded-xl border border-white/10 bg-card/90 p-4 shadow-2xl backdrop-blur-md"
+                    >
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {offer.judge}
+                      </p>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold">{offer.amount}</span>
+                        <span className="text-xs text-muted-foreground">
+                          for {offer.equity}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="xs"
+                          onClick={() => {
+                            const num = parseFloat(offer.amount.replace(/[$,K,M]/g, "")) *
+                              (offer.amount.includes("M") ? 1000000 : offer.amount.includes("K") ? 1000 : 1);
+                            setRaised((prev) => prev + num);
+                            setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+                          }}
+                        >
+                          Accept
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={() =>
+                            setOffers((prev) => prev.filter((o) => o.id !== offer.id))
+                          }
+                        >
+                          Decline
+                        </Button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </AnimatePresence>
+
+            {/* Test button */}
+            <div className="absolute bottom-4 left-4 z-10">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const next = sampleOffers[offers.length % sampleOffers.length];
+                  setOffers((prev) => [...prev, { ...next, id: Date.now() }]);
+                }}
+              >
+                Test offer
+              </Button>
             </div>
           </main>
 
