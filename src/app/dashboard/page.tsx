@@ -15,6 +15,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { JudgesSceneLoader } from "@/components/judges-scene-loader";
+import { generatePitch, startSession } from "@/lib/api";
+import {
+  useSessionWebSocket,
+  type InvestorMessage,
+  type FinalDecisionPayload,
+  type InvestorDecision,
+} from "@/hooks/useSessionWebSocket";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useTTS } from "@/hooks/useTTS";
 
 type Mode = "generate" | "custom";
 
@@ -57,12 +66,9 @@ type Offer = {
   judge: string;
   amount: string;
   equity: string;
+  rawAmount: number;
+  rawEquity: number;
 };
-
-const sampleOffers: Offer[] = [
-  { id: 1, judge: "Mr. Wonderful", amount: "$50K", equity: "25%" },
-  { id: 2, judge: "The Visionary", amount: "$250K", equity: "15%" },
-];
 
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
@@ -74,7 +80,7 @@ export default function Dashboard() {
   const [generatedPitch, setGeneratedPitch] = useState<GeneratedPitch | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genStep, setGenStep] = useState(0);
-  const [phase, setPhase] = useState<"setup" | "generating" | "briefing" | "launching" | "session" | "summary">("setup");
+  const [phase, setPhase] = useState<"setup" | "generating" | "briefing" | "launching" | "connecting" | "session" | "summary">("setup");
   const [offers, setOffers] = useState<Offer[]>([]);
   const [raised, setRaised] = useState(0);
   const [equityGiven, setEquityGiven] = useState(0);
@@ -83,8 +89,91 @@ export default function Dashboard() {
   const [transcript, setTranscript] = useState<{ speaker: string; text: string }[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [finalDecisions, setFinalDecisions] = useState<InvestorDecision[] | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
+  // WebSocket callbacks
+  const onStatus = useCallback((text: string) => {
+    setTranscript((prev) => [...prev, { speaker: "System", text }]);
+  }, []);
+
+  const onProcessing = useCallback(() => {
+    setIsProcessing(true);
+  }, []);
+
+  const onInvestorResponse = useCallback((messages: InvestorMessage[]) => {
+    setIsProcessing(false);
+    setTranscript((prev) => [
+      ...prev,
+      ...messages.map((m) => ({ speaker: m.investor, text: m.text })),
+    ]);
+    for (const msg of messages) {
+      ttsEnqueue(msg.text);
+    }
+  }, []);
+
+  const onFinalDecision = useCallback((payload: FinalDecisionPayload) => {
+    setIsProcessing(false);
+    setFinalDecisions(payload.decisions);
+
+    const investing = payload.decisions.filter((d) => d.invest);
+    const declining = payload.decisions.filter((d) => !d.invest);
+
+    for (const d of declining) {
+      setTranscript((prev) => [
+        ...prev,
+        { speaker: d.investor, text: `I'm out. ${d.reason || ""}` },
+      ]);
+    }
+
+    if (investing.length > 0) {
+      const newOffers: Offer[] = investing.map((d, i) => ({
+        id: Date.now() + i,
+        judge: d.investor,
+        amount: `$${(d.amount || 0).toLocaleString()}`,
+        equity: d.equity || "0%",
+        rawAmount: d.amount || 0,
+        rawEquity: parseFloat((d.equity || "0").replace("%", "")),
+      }));
+      setOffers(newOffers);
+    } else {
+      setTimeout(() => setPhase("summary"), 2000);
+    }
+  }, []);
+
+  const onWsError = useCallback((text: string) => {
+    setTranscript((prev) => [...prev, { speaker: "System", text }]);
+  }, []);
+
+  const { status: wsStatus, sendTranscript, sendEndSession } = useSessionWebSocket(
+    sessionId,
+    { onStatus, onProcessing, onInvestorResponse, onFinalDecision, onError: onWsError }
+  );
+
+  // TTS
+  const { enqueue: ttsEnqueue, clear: ttsClear } = useTTS();
+
+  // Speech recognition
+  const onSpeechResult = useCallback(
+    (text: string) => {
+      setTranscript((prev) => [...prev, { speaker: "You", text }]);
+      sendTranscript(text);
+    },
+    [sendTranscript]
+  );
+
+  const {
+    isListening,
+    start: speechStart,
+    stop: speechStop,
+    pause: speechPause,
+    resume: speechResume,
+  } = useSpeechRecognition(onSpeechResult);
+
+  // Camera
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -102,27 +191,66 @@ export default function Dashboard() {
     }
   }, []);
 
+  // Start session connection
+  const connectToSession = useCallback(async () => {
+    setPhase("connecting");
+    try {
+      const description =
+        generatedPitch?.content.description || customIdea;
+      const res = await startSession(goalRaise, description);
+      setSessionId(res.session_id);
+      setPhase("session");
+    } catch {
+      setPhase("launching");
+      setTranscript((prev) => [
+        ...prev,
+        { speaker: "System", text: "Failed to connect to judges. Try again." },
+      ]);
+    }
+  }, [goalRaise, generatedPitch, customIdea]);
+
+  // Request camera/mic as soon as we start connecting
   useEffect(() => {
-    if (phase === "session") {
+    if (phase === "connecting" || phase === "session") {
       startCamera();
-      setTimeLeft(180);
     }
     return () => {
-      if (videoRef.current?.srcObject) {
+      if (phase !== "connecting" && phase !== "session" && videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
       }
     };
   }, [phase, startCamera]);
 
+  // Start speech recognition when session phase + WebSocket connected (independent of camera)
+  useEffect(() => {
+    if (phase === "session" && wsStatus === "connected") {
+      speechStart();
+    }
+    return () => {
+      if (phase !== "session") speechStop();
+    };
+  }, [phase, wsStatus]);
+
+  // Set timer when session starts
+  useEffect(() => {
+    if (phase === "session") {
+      setTimeLeft(180);
+    }
+  }, [phase]);
+
+  // Timer
   useEffect(() => {
     if (phase !== "session") return;
     if (timeLeft <= 0) {
+      sendEndSession();
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
       }
-      setPhase("summary");
+      speechStop();
+      ttsClear();
+      setTimeout(() => setPhase("summary"), 3000);
       return;
     }
     const interval = setInterval(() => {
@@ -131,6 +259,7 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [phase, timeLeft]);
 
+  // Time alerts
   useEffect(() => {
     if (phase !== "session") return;
     if (timeLeft === 120) setTimeAlert("2 minutes remaining");
@@ -145,6 +274,11 @@ export default function Dashboard() {
     return () => clearTimeout(timeout);
   }, [timeAlert]);
 
+  // Auto-scroll transcript
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [transcript]);
+
   const canLaunch =
     mode === "generate" ||
     (mode === "custom" && customIdea.trim().length > 0 && parseFloat(customRaise) > 0 && parseFloat(customEquity) > 0);
@@ -157,6 +291,7 @@ export default function Dashboard() {
     "Packaging your challenge...",
   ];
 
+  // Generate pitch
   useEffect(() => {
     if (phase !== "generating") return;
 
@@ -166,9 +301,7 @@ export default function Dashboard() {
 
     const doFetch = async () => {
       try {
-        const res = await fetch("http://localhost:8000/generate-pitch", { method: "POST" });
-        if (!res.ok) throw new Error("Generation failed");
-        const data: GeneratedPitch = await res.json();
+        const data = await generatePitch();
         setGeneratedPitch(data);
         setGoalRaise(data.financials.raise_amount);
         setGoalEquity(data.financials.equity_percent);
@@ -183,6 +316,8 @@ export default function Dashboard() {
 
     return () => clearInterval(stepInterval);
   }, [phase]);
+
+  // --- RENDER PHASES ---
 
   if (phase === "summary") {
     const goalMet = raised >= goalRaise;
@@ -252,6 +387,27 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {finalDecisions && (
+            <div className="grid w-full max-w-sm gap-3">
+              <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                Investor Decisions
+              </p>
+              {finalDecisions.map((d, i) => (
+                <div key={i} className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">{d.investor}</p>
+                    {d.reason && (
+                      <p className="text-xs text-muted-foreground">{d.reason}</p>
+                    )}
+                  </div>
+                  <span className={`text-xs font-semibold ${d.invest ? "text-emerald-400" : "text-muted-foreground"}`}>
+                    {d.invest ? `$${(d.amount || 0).toLocaleString()}` : "Out"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <Button
             size="lg"
             onClick={() => {
@@ -269,6 +425,8 @@ export default function Dashboard() {
               setCustomRaise("");
               setCustomEquity("");
               setTimeLeft(180);
+              setSessionId(null);
+              setFinalDecisions(null);
             }}
           >
             Try again
@@ -404,7 +562,7 @@ export default function Dashboard() {
     );
   }
 
-  if (phase === "launching") {
+  if (phase === "launching" || phase === "connecting") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-8">
         <motion.div
@@ -433,12 +591,16 @@ export default function Dashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 2.5 }}
           >
-            <Button
-              size="lg"
-              onClick={() => setPhase("session")}
-            >
-              Connect with judges
-            </Button>
+            {phase === "connecting" ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-foreground" />
+                Connecting to judges...
+              </div>
+            ) : (
+              <Button size="lg" onClick={connectToSession}>
+                Connect with judges
+              </Button>
+            )}
           </motion.div>
         </motion.div>
       </div>
@@ -462,6 +624,24 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex items-center gap-4 font-mono text-xs">
+            {/* Connection status */}
+            <span className="flex items-center gap-1.5">
+              <span className={`size-2 rounded-full ${
+                wsStatus === "connected" ? "bg-emerald-400" :
+                wsStatus === "connecting" ? "bg-yellow-400 animate-pulse" :
+                "bg-destructive"
+              }`} />
+              <span className="text-muted-foreground">
+                {wsStatus === "connected" ? "Live" : wsStatus === "connecting" ? "Connecting" : "Disconnected"}
+              </span>
+            </span>
+            {/* Mic status */}
+            <span className="flex items-center gap-1.5">
+              <span className={`size-2 rounded-full ${isListening ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/30"}`} />
+              <span className="text-muted-foreground">
+                {isListening ? "Mic on" : "Mic off"}
+              </span>
+            </span>
             {goalRaise > 0 && (
               <>
                 <span className="text-muted-foreground">
@@ -569,25 +749,24 @@ export default function Dashboard() {
                       </div>
                       <div className="flex gap-2">
                         <Button
-                          size="xs"
+                          size="sm"
                           onClick={() => {
-                            const num = parseFloat(offer.amount.replace(/[$,K,M]/g, "")) *
-                              (offer.amount.includes("M") ? 1000000 : offer.amount.includes("K") ? 1000 : 1);
-                            const eq = parseFloat(offer.equity.replace("%", ""));
-                            setRaised((prev) => prev + num);
-                            setEquityGiven((prev) => prev + eq);
+                            setRaised((prev) => prev + offer.rawAmount);
+                            setEquityGiven((prev) => prev + offer.rawEquity);
                             setOffers((prev) => prev.filter((o) => o.id !== offer.id));
                             setTranscript((prev) => [...prev, { speaker: "You", text: `Accepted ${offer.judge}'s offer of ${offer.amount} for ${offer.equity}.` }]);
+                            if (offers.length === 1) setTimeout(() => setPhase("summary"), 1500);
                           }}
                         >
                           Accept
                         </Button>
                         <Button
                           variant="ghost"
-                          size="xs"
+                          size="sm"
                           onClick={() => {
                             setOffers((prev) => prev.filter((o) => o.id !== offer.id));
                             setTranscript((prev) => [...prev, { speaker: "You", text: `Declined ${offer.judge}'s offer of ${offer.amount} for ${offer.equity}.` }]);
+                            if (offers.length === 1) setTimeout(() => setPhase("summary"), 1500);
                           }}
                         >
                           Decline
@@ -598,21 +777,6 @@ export default function Dashboard() {
                 </div>
               )}
             </AnimatePresence>
-
-            {/* Test button */}
-            <div className="absolute bottom-4 left-4 z-10">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const next = sampleOffers[offers.length % sampleOffers.length];
-                  setOffers((prev) => [...prev, { ...next, id: Date.now() }]);
-                  setTranscript((prev) => [...prev, { speaker: next.judge, text: `Made a ${next.amount} offer for ${next.equity} equity.` }]);
-                }}
-              >
-                Test offer
-              </Button>
-            </div>
           </main>
 
           {/* Transcript — right side */}
@@ -639,6 +803,21 @@ export default function Dashboard() {
                     </p>
                   </motion.div>
                 ))}
+                {isProcessing && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="flex items-center gap-2"
+                  >
+                    <div className="flex gap-1">
+                      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style={{ animationDelay: "0ms" }} />
+                      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style={{ animationDelay: "150ms" }} />
+                      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Investors are thinking...</span>
+                  </motion.div>
+                )}
+                <div ref={transcriptEndRef} />
               </div>
             </div>
             <div className="shrink-0 border-t p-4">
@@ -646,13 +825,16 @@ export default function Dashboard() {
                 variant="destructive"
                 className="w-full"
                 onClick={() => {
+                  sendEndSession();
+                  speechStop();
+                  ttsClear();
                   if (videoRef.current?.srcObject) {
                     const stream = videoRef.current.srcObject as MediaStream;
                     stream.getTracks().forEach((track) => track.stop());
                   }
-                  setPhase("summary");
                   setCameraReady(false);
                   setCameraError(null);
+                  setTimeout(() => setPhase("summary"), 3000);
                 }}
               >
                 <svg
