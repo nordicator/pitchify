@@ -23,7 +23,7 @@ import {
   type InvestorDecision,
 } from "@/hooks/useSessionWebSocket";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
-import { useTTS } from "@/hooks/useTTS";
+import { useTTS, unlockAudio } from "@/hooks/useTTS";
 
 type Mode = "generate" | "custom";
 
@@ -94,6 +94,45 @@ export default function Dashboard() {
   const [finalDecisions, setFinalDecisions] = useState<InvestorDecision[] | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const speechStopRef = useRef<() => void>(() => {});
+
+  // TTS
+  const { enqueue: ttsEnqueue, clear: ttsClear } = useTTS();
+
+  // Speech recognition with debounce — accumulate segments and send after 2s of silence
+  const speechBufferRef = useRef<string[]>([]);
+  const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushSpeechBuffer = useCallback(() => {
+    const full = speechBufferRef.current.join(" ").trim();
+    speechBufferRef.current = [];
+    if (full) {
+      setTranscript((prev) => [...prev, { speaker: "You", text: full }]);
+      sendTranscriptRef.current(full);
+    }
+  }, []);
+
+  const onSpeechResult = useCallback(
+    (text: string) => {
+      speechBufferRef.current.push(text);
+      if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = setTimeout(flushSpeechBuffer, 2000);
+    },
+    [flushSpeechBuffer]
+  );
+
+  const {
+    isListening,
+    start: speechStart,
+    stop: speechStop,
+    pause: speechPause,
+    resume: speechResume,
+  } = useSpeechRecognition(onSpeechResult);
+
+  speechStopRef.current = speechStop;
+
+  // WebSocket send ref (set after hook is created)
+  const sendTranscriptRef = useRef<(text: string) => void>(() => {});
 
   // WebSocket callbacks
   const onStatus = useCallback((text: string) => {
@@ -106,17 +145,16 @@ export default function Dashboard() {
 
   const onInvestorResponse = useCallback((messages: InvestorMessage[]) => {
     setIsProcessing(false);
-    setTranscript((prev) => [
-      ...prev,
-      ...messages.map((m) => ({ speaker: m.investor, text: m.text })),
-    ]);
     for (const msg of messages) {
-      ttsEnqueue(msg.text);
+      ttsEnqueue(msg.text, () => {
+        setTranscript((prev) => [...prev, { speaker: msg.investor, text: msg.text }]);
+      });
     }
-  }, []);
+  }, [ttsEnqueue]);
 
   const onFinalDecision = useCallback((payload: FinalDecisionPayload) => {
     setIsProcessing(false);
+    speechStopRef.current();
     setFinalDecisions(payload.decisions);
 
     const investing = payload.decisions.filter((d) => d.invest);
@@ -153,25 +191,7 @@ export default function Dashboard() {
     { onStatus, onProcessing, onInvestorResponse, onFinalDecision, onError: onWsError }
   );
 
-  // TTS
-  const { enqueue: ttsEnqueue, clear: ttsClear } = useTTS();
-
-  // Speech recognition
-  const onSpeechResult = useCallback(
-    (text: string) => {
-      setTranscript((prev) => [...prev, { speaker: "You", text }]);
-      sendTranscript(text);
-    },
-    [sendTranscript]
-  );
-
-  const {
-    isListening,
-    start: speechStart,
-    stop: speechStop,
-    pause: speechPause,
-    resume: speechResume,
-  } = useSpeechRecognition(onSpeechResult);
+  sendTranscriptRef.current = sendTranscript;
 
   // Camera
   const startCamera = useCallback(async () => {
@@ -191,9 +211,29 @@ export default function Dashboard() {
     }
   }, []);
 
-  // Start session connection
+  // Start session connection — request mic/camera directly from click handler
   const connectToSession = useCallback(async () => {
     setPhase("connecting");
+
+    // Unlock audio playback in user gesture context
+    unlockAudio();
+
+    // Request media immediately in the user gesture context
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraReady(true);
+    } catch (err) {
+      setCameraError(
+        err instanceof Error ? err.message : "Could not access camera"
+      );
+    }
+
     try {
       const description =
         generatedPitch?.content.description || customIdea;
@@ -209,28 +249,22 @@ export default function Dashboard() {
     }
   }, [goalRaise, generatedPitch, customIdea]);
 
-  // Request camera/mic as soon as we start connecting
+  // Attach stream to video element once session renders
   useEffect(() => {
-    if (phase === "connecting" || phase === "session") {
+    if (phase === "session" && videoRef.current && !videoRef.current.srcObject && cameraReady) {
       startCamera();
     }
-    return () => {
-      if (phase !== "connecting" && phase !== "session" && videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [phase, startCamera]);
+  }, [phase, cameraReady, startCamera]);
 
-  // Start speech recognition when session phase + WebSocket connected (independent of camera)
+  // Start speech recognition as soon as session phase begins
   useEffect(() => {
-    if (phase === "session" && wsStatus === "connected") {
+    if (phase === "session") {
       speechStart();
     }
     return () => {
       if (phase !== "session") speechStop();
     };
-  }, [phase, wsStatus]);
+  }, [phase]);
 
   // Set timer when session starts
   useEffect(() => {
@@ -508,11 +542,13 @@ export default function Dashboard() {
             Your challenge
           </p>
 
-          <img
-            src={generatedPitch.image_base64}
-            alt={generatedPitch.content.product_name}
-            className="h-48 w-48 rounded-2xl border object-cover shadow-lg"
-          />
+          {generatedPitch.image_base64 && (
+            <img
+              src={generatedPitch.image_base64}
+              alt={generatedPitch.content.product_name}
+              className="h-48 w-48 rounded-2xl border object-cover shadow-lg"
+            />
+          )}
 
           <div className="grid gap-2">
             <h1 className="text-2xl font-bold tracking-tight">

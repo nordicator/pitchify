@@ -5,11 +5,19 @@ returns investor panel text response from Gemini.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
 from google import genai
 from google.genai import types
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("pitchify.session")
 
 _client = None
 
@@ -356,37 +364,20 @@ Questions should feel like real investor questions during a pitch.
 
 
 ========================
-INVESTOR CLOSING MESSAGE
+INVESTOR CLOSING & INVESTMENT DECISION
 ========================
 
-When investors have enough information:
+When investors have enough information (after 2-3 questions have been answered):
 
-They should end the questioning phase with:
+They MUST immediately make their final investment decisions in the same response.
 
-"Alright, thank you."
+Do NOT say "thank you, we've heard enough" and stop.
+Do NOT wait for another prompt.
+Do NOT end with a closing statement without decisions.
 
-or a similar short closing.
+Instead, directly return the final decision JSON format (see FINAL DECISION FORMAT below).
 
-Examples:
-
-"Alright, thank you. We have heard enough."
-
-"Okay, thank you for answering our questions."
-
-"Alright, we have what we need."
-
-
-Rules:
-- This is NOT the investment decision.
-- Do not reveal investments.
-- Do not reveal interest level.
-- Do not mention money.
-- Do not mention equity.
-
-After this:
-STOP.
-
-Wait for the server to request investment decisions.
+The investors announce their decisions naturally as part of the conversation — they state whether they're in or out, and if in, what they're offering.
 
 
 ========================
@@ -494,23 +485,26 @@ Adaptability (5%):
 INVESTMENT DIFFICULTY
 ========================
 
-Investors are skeptical, but not impossible to convince.
+Investors are skeptical but WILLING to take risks on promising ideas.
 
-The goal is realistic investing, not rejecting everything.
+The goal is realistic early-stage investing. Most pitches with a solid product, clear pitch, and reasonable answers should receive AT LEAST one investment offer.
 
-Investors can invest based on:
-- Strong potential.
-- Unique ideas.
-- Large markets.
-- Good founder ability.
-- Clear opportunity.
+Investors SHOULD invest when they see:
+- A clear problem being solved.
+- A founder who understands their product.
+- A large or growing market.
+- Reasonable answers to tough questions.
+- Unique or defensible ideas.
 
 Investors do NOT require:
 - Perfect traction.
 - Perfect financials.
 - A finished company.
+- Flawless answers to every question.
 
-Early-stage investing involves uncertainty.
+Early-stage investing involves uncertainty. Investors bet on potential, not proof.
+
+If the pitch is coherent and the founder defends their idea reasonably well, at least 1-2 investors should make offers. Only reject completely if the founder cannot explain their product or gives contradictory/nonsensical answers.
 
 
 ========================
@@ -609,12 +603,40 @@ Return valid JSON only."""
 def _extract_json(text: str):
     """Extract JSON from model response, stripping any markdown fences."""
     text = text.strip()
-    text = re.sub(r'^```(?:json)?\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-    return json.loads(text)
+    # Strip markdown fences anywhere in the string
+    text = re.sub(r'```(?:json)?\s*', '', text)
+    text = re.sub(r'```', '', text)
+    text = text.strip()
+
+    # Try parsing as-is first
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Try to find a JSON array or object in the text
+    for start_char, end_char in [('[', ']'), ('{', '}')]:
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        # Find the matching closing bracket
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == start_char:
+                depth += 1
+            elif text[i] == end_char:
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except (json.JSONDecodeError, ValueError):
+                        break
+
+    raise ValueError(f"Could not extract JSON from: {text[:100]}")
 
 
-def _get_investor_response(history: list, transcript: str, context: dict, max_retries: int = 3):
+def _get_investor_response_sync(history: list, transcript: str, context: dict, max_retries: int = 3):
     """Returns parsed JSON (list or dict) from Gemini with retry on transient errors."""
     client = _get_client()
     goal = context["fundraising_goal"]
@@ -630,38 +652,75 @@ def _get_investor_response(history: list, transcript: str, context: dict, max_re
     )
 
     messages = history + [{"role": "user", "parts": [{"text": transcript}]}]
+    num_turns = len(history) // 2
+
+    log.info(f"Gemini request | turn={num_turns} | input={transcript[:80]!r}")
+    t0 = time.perf_counter()
 
     last_error = None
     for attempt in range(max_retries):
         try:
+            attempt_t0 = time.perf_counter()
             response = client.models.generate_content(
                 model="gemini-3.5-flash",
                 config=types.GenerateContentConfig(
                     system_instruction=system,
-                    temperature=0.9,
+                    temperature=0.7,
+                    max_output_tokens=2048,
                 ),
                 contents=messages,
             )
+            elapsed = time.perf_counter() - attempt_t0
             raw = (response.text or "").strip()
+            log.info(f"Gemini response | {elapsed:.2f}s | {len(raw)} chars | raw={raw[:120]!r}")
+
             try:
-                return _extract_json(raw)
-            except (json.JSONDecodeError, ValueError):
-                return [{"investor": "Doubter", "text": raw}]
+                parsed = _extract_json(raw)
+                total = time.perf_counter() - t0
+                is_final = isinstance(parsed, dict) and parsed.get("final")
+                log.info(f"Gemini parsed OK | total={total:.2f}s | final={is_final} | type={'dict' if isinstance(parsed, dict) else 'list'}")
+                return parsed
+            except (json.JSONDecodeError, ValueError) as parse_err:
+                if '"final"' in raw or '"decisions"' in raw:
+                    log.warning(f"Truncated final decision, retrying | raw_tail={raw[-80:]!r}")
+                    raise ValueError("Truncated final decision JSON, retrying")
+                clean = re.sub(r'[{}\[\]":]', '', raw).strip()
+                if clean:
+                    log.warning(f"JSON parse failed, using fallback text | error={parse_err} | clean={clean[:80]!r}")
+                    return [{"investor": "Doubter", "text": clean}]
+                raise ValueError("Empty response from model")
         except Exception as e:
             last_error = e
             error_str = str(e)
-            is_transient = any(code in error_str for code in ["503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED"])
+            is_transient = any(code in error_str for code in [
+                "503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "Truncated"
+            ])
             if not is_transient:
+                elapsed = time.perf_counter() - t0
+                log.error(f"Gemini fatal error | {elapsed:.2f}s | attempt={attempt+1} | {error_str[:120]}")
                 raise
             wait = (2 ** attempt) + 0.5
-            print(f"[session] Gemini {error_str[:80]}... retrying in {wait:.1f}s (attempt {attempt + 1}/{max_retries})")
+            log.warning(f"Gemini transient error | attempt={attempt+1}/{max_retries} | retrying in {wait:.1f}s | {error_str[:80]}")
             time.sleep(wait)
 
+    elapsed = time.perf_counter() - t0
+    log.error(f"Gemini all retries exhausted | {elapsed:.2f}s | {last_error}")
     raise last_error
+
+
+async def _get_investor_response(history: list, transcript: str, context: dict, max_retries: int = 3):
+    """Async wrapper that runs Gemini call in a thread pool to avoid blocking."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, _get_investor_response_sync, history, transcript, context, max_retries
+    )
 
 
 async def run_live_session(session_id: str, context: dict, browser_ws):
     history = []
+    session_start = time.perf_counter()
+
+    log.info(f"Session started | id={session_id} | goal=${context.get('fundraising_goal', 0):,}")
 
     await browser_ws.send_text(json.dumps({
         "type": "status",
@@ -672,6 +731,8 @@ async def run_live_session(session_id: str, context: dict, browser_ws):
         while True:
             data = await browser_ws.receive()
             if data["type"] == "websocket.disconnect":
+                elapsed = time.perf_counter() - session_start
+                log.info(f"Session disconnected | id={session_id} | duration={elapsed:.1f}s | turns={len(history)//2}")
                 break
             if "text" not in data or not data["text"]:
                 continue
@@ -683,37 +744,48 @@ async def run_live_session(session_id: str, context: dict, browser_ws):
                 if not transcript:
                     continue
 
-                print(f"[session] founder: {transcript}")
+                log.info(f"Founder spoke | id={session_id} | text={transcript[:100]!r}")
                 await browser_ws.send_text(json.dumps({"type": "processing"}))
 
-                response_data = _get_investor_response(history, transcript, context)
-                print(f"[session] investor: {json.dumps(response_data)[:120]}")
+                t0 = time.perf_counter()
+                response_data = await _get_investor_response(history, transcript, context)
+                roundtrip = time.perf_counter() - t0
 
                 history.append({"role": "user", "parts": [{"text": transcript}]})
                 history.append({"role": "model", "parts": [{"text": json.dumps(response_data)}]})
 
                 # Check if final decision
                 if isinstance(response_data, dict) and response_data.get("final"):
+                    decisions = response_data.get("decisions", [])
+                    investing = [d for d in decisions if d.get("invest")]
+                    log.info(f"Final decision | id={session_id} | roundtrip={roundtrip:.2f}s | investors_in={len(investing)}/{len(decisions)}")
                     await browser_ws.send_text(json.dumps({
                         "type": "final_decision",
                         "data": response_data,
                     }))
                 else:
+                    speakers = [r.get("investor", "?") for r in response_data] if isinstance(response_data, list) else ["?"]
+                    log.info(f"Investor response | id={session_id} | roundtrip={roundtrip:.2f}s | speakers={speakers}")
                     await browser_ws.send_text(json.dumps({
                         "type": "investor_response",
                         "data": response_data,
                     }))
 
             elif msg.get("type") == "end_session":
+                log.info(f"End session requested | id={session_id} | turns={len(history)//2}")
+                t0 = time.perf_counter()
                 end_prompt = "Make your final investment decisions now."
-                response_data = _get_investor_response(history, end_prompt, context)
+                response_data = await _get_investor_response(history, end_prompt, context)
+                roundtrip = time.perf_counter() - t0
+                log.info(f"Final decision (forced) | id={session_id} | roundtrip={roundtrip:.2f}s")
                 await browser_ws.send_text(json.dumps({
                     "type": "final_decision",
                     "data": response_data,
                 }))
 
     except Exception as e:
-        print(f"[session] error: {e}")
+        elapsed = time.perf_counter() - session_start
+        log.error(f"Session error | id={session_id} | duration={elapsed:.1f}s | error={e}", exc_info=True)
         try:
             await browser_ws.send_text(json.dumps({
                 "type": "error",

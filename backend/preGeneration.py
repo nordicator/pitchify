@@ -3,95 +3,86 @@ Pre-generation step: build pitch context from user input before session starts.
 Generates a structured pitch summary using Gemini.
 """
 
-import glob
+import json
+import logging
 import os
-import random
 import re
+import time
 
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-_client = None
+log = logging.getLogger("pitchify.generation")
 
-PITCHES_DIR = os.path.join(os.path.dirname(__file__), "pitches")
+_client = None
 
 
 class PitchData(BaseModel):
     product_name: str
     product_description: str
+    elevator_pitch: str
     raise_amount: str
     equity_offered: str
 
 
-def _parse_pitch_markdown(md_text: str) -> PitchData:
-    lines = md_text.strip().split("\n")
+class _PitchSchema(BaseModel):
+    product_name: str
+    elevator_pitch: str
+    product_description: str
+    raise_amount: int
+    equity_offered: float
 
-    product_name = ""
-    for line in lines:
-        if line.startswith("# ") and "Pitch Deck" not in line:
-            product_name = line.lstrip("# ").strip()
-            break
 
-    description_lines = []
-    in_overview = False
-    for line in lines:
-        if "Product Overview" in line:
-            in_overview = True
+def generate_pitch() -> PitchData:
+    """Generate a unique startup pitch concept using Gemini with structured output."""
+    client = _get_client()
+
+    prompt = """\
+Invent a creative startup product. Keep ALL text fields SHORT.
+
+- product_name: 1-2 word brand name
+- elevator_pitch: One sentence, max 15 words
+- product_description: Max 2 short sentences
+- raise_amount: integer like 500000
+- equity_offered: number like 10.0"""
+
+    last_error = None
+    for attempt in range(3):
+        t0 = time.perf_counter()
+        try:
+            log.info(f"Pitch generation | attempt={attempt+1}")
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                config=types.GenerateContentConfig(
+                    temperature=1.2,
+                    max_output_tokens=2048,
+                    response_mime_type="application/json",
+                    response_schema=_PitchSchema,
+                ),
+                contents=prompt,
+            )
+            elapsed = time.perf_counter() - t0
+            log.info(f"Pitch generation response | {elapsed:.2f}s | raw={response.text[:100]!r}")
+
+            result = _PitchSchema.model_validate_json(response.text)
+            log.info(f"Pitch generated OK | name={result.product_name!r} | raise={result.raise_amount} | equity={result.equity_offered}")
+
+            return PitchData(
+                product_name=result.product_name,
+                product_description=result.product_description,
+                elevator_pitch=result.elevator_pitch,
+                raise_amount=str(result.raise_amount),
+                equity_offered=str(result.equity_offered),
+            )
+        except Exception as e:
+            elapsed = time.perf_counter() - t0
+            last_error = e
+            log.warning(f"Pitch generation failed | attempt={attempt+1} | {elapsed:.2f}s | {e}")
             continue
-        if in_overview:
-            if line.startswith("## "):
-                break
-            if line.strip().startswith("*"):
-                description_lines.append(
-                    re.sub(r"^\*\s*\*\*[^*]+\*\*\s*", "", line.strip().lstrip("* "))
-                )
 
-    description = " ".join(description_lines) if description_lines else ""
-
-    raise_amount = ""
-    equity_offered = ""
-    for line in lines:
-        money_match = re.search(r"\$[\d,]+(?:,\d{3})*", line)
-        equity_match = re.search(r"([\d.]+)%\s*equity", line)
-        if money_match and equity_match:
-            raise_amount = money_match.group(0).replace("$", "").strip()
-            equity_offered = equity_match.group(1) + "%"
-            break
-
-    return PitchData(
-        product_name=product_name,
-        product_description=description,
-        raise_amount=raise_amount,
-        equity_offered=equity_offered,
-    )
-
-
-def generate_pitch() -> tuple:
-    md_files = glob.glob(os.path.join(PITCHES_DIR, "*.md"))
-    if not md_files:
-        raise FileNotFoundError("No pitch files found in pitches/ directory")
-
-    chosen_md = random.choice(md_files)
-    base_name = os.path.splitext(chosen_md)[0]
-    png_path = base_name + ".png"
-
-    with open(chosen_md, "r") as f:
-        md_text = f.read()
-
-    pitch_data = _parse_pitch_markdown(md_text)
-
-    if os.path.exists(png_path):
-        with open(png_path, "rb") as f:
-            image_bytes = f.read()
-    else:
-        image_bytes = b""
-
-    class ImageWrapper:
-        def __init__(self, data: bytes):
-            self.image_bytes = data
-
-    return (pitch_data, md_text, ImageWrapper(image_bytes))
+    log.error(f"Pitch generation exhausted all retries | {last_error}")
+    raise last_error
 
 
 def _get_client():
@@ -102,6 +93,9 @@ def _get_client():
 
 
 def generate_pitch_context(fundraising_goal: int, startup_description: str) -> dict:
+    log.info(f"Generating pitch context | goal=${fundraising_goal:,} | desc={startup_description[:60]!r}")
+    t0 = time.perf_counter()
+
     prompt = (
         f"A founder is pitching a startup. Given the description below, write a 2-3 sentence "
         f"pitch summary that captures the core value proposition, target market, and key risk.\n\n"
@@ -117,7 +111,9 @@ def generate_pitch_context(fundraising_goal: int, startup_description: str) -> d
         contents=prompt,
     )
 
+    elapsed = time.perf_counter() - t0
     pitch_summary = response.text.strip() if response.text else startup_description
+    log.info(f"Pitch context ready | {elapsed:.2f}s | summary={pitch_summary[:80]!r}")
 
     return {
         "fundraising_goal": fundraising_goal,

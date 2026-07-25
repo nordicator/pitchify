@@ -3,8 +3,6 @@ FastAPI server for Pitchify.
 HTTP endpoints for session setup + WebSocket for Gemini Live audio bridge.
 """
 
-import base64
-import io
 import os
 import traceback
 import uuid
@@ -16,10 +14,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from preGeneration import PitchData, generate_pitch, generate_pitch_context
+from preGeneration import generate_pitch, generate_pitch_context
 from live_session import run_live_session
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 app = FastAPI(title="Pitchify API")
 
@@ -31,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
+FISH_API_KEY = os.environ.get("FISH_AUDIO_API_KEY", "")
 FISH_BASE = "https://api.fish.audio"
 
 # In-memory context store: session_id → context dict
@@ -59,45 +57,24 @@ class PitchResponse(BaseModel):
 
 @app.post("/generate-pitch", response_model=PitchResponse)
 async def generate_pitch_endpoint():
-    """Generates a pitch with clearly separated content, financials, and image."""
+    """Generates a pitch using Gemini."""
     try:
-        pitch_data, summary_markdown, image = generate_pitch()
-
-        from PIL import Image as PILImage
-        buffered = io.BytesIO()
-        if isinstance(image, PILImage.Image):
-            image.save(buffered, "PNG")
-        else:
-            PILImage.open(io.BytesIO(image.image_bytes)).save(buffered, "PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        pitch_data = generate_pitch()
 
         raise_num = int(pitch_data.raise_amount.replace(",", "").replace("$", ""))
         equity_num = float(pitch_data.equity_offered.replace("%", ""))
 
-        lines = summary_markdown.strip().split("\n")
-        elevator = ""
-        for i, line in enumerate(lines):
-            if "elevator" in line.lower() or "pitch" in line.lower():
-                for j in range(i + 1, len(lines)):
-                    if lines[j].strip() and not lines[j].startswith("#"):
-                        elevator = lines[j].strip()
-                        break
-                break
-
-        if not elevator:
-            elevator = pitch_data.product_description.split(".")[0] + "."
-
         return PitchResponse(
             content=PitchContent(
                 product_name=pitch_data.product_name,
-                elevator_pitch=elevator,
+                elevator_pitch=pitch_data.elevator_pitch,
                 description=pitch_data.product_description.strip(),
             ),
             financials=PitchFinancials(
                 raise_amount=raise_num,
                 equity_percent=equity_num,
             ),
-            image_base64=f"data:image/png;base64,{img_base64}",
+            image_base64="",
         )
 
     except Exception as e:

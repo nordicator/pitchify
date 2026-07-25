@@ -3,8 +3,28 @@
 import { useCallback, useRef } from "react";
 import { speakText } from "@/lib/api";
 
+let audioUnlocked = false;
+
+/**
+ * Call this from a click handler to unlock audio playback in the browser.
+ */
+export function unlockAudio() {
+  if (audioUnlocked) return;
+  const silent = new Audio(
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+  );
+  silent.play().then(() => {
+    audioUnlocked = true;
+  }).catch(() => {});
+}
+
+type QueueItem = {
+  text: string;
+  onStart?: () => void;
+};
+
 export function useTTS(onPlayStart?: () => void, onPlayEnd?: () => void) {
-  const queueRef = useRef<string[]>([]);
+  const queueRef = useRef<QueueItem[]>([]);
   const playingRef = useRef(false);
 
   const playNext = useCallback(async () => {
@@ -13,9 +33,11 @@ export function useTTS(onPlayStart?: () => void, onPlayEnd?: () => void) {
     playingRef.current = true;
     onPlayStart?.();
 
-    const text = queueRef.current.shift()!;
+    const item = queueRef.current.shift()!;
+    item.onStart?.();
+
     try {
-      const res = await speakText(text);
+      const res = await speakText(item.text);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -47,8 +69,8 @@ export function useTTS(onPlayStart?: () => void, onPlayEnd?: () => void) {
   }, [onPlayStart, onPlayEnd]);
 
   const enqueue = useCallback(
-    (text: string) => {
-      queueRef.current.push(text);
+    (text: string, onStart?: () => void) => {
+      queueRef.current.push({ text, onStart });
       playNext();
     },
     [playNext]
