@@ -8,7 +8,7 @@ export default function SharkSceneLoader() {
     >
       <iframe
         title="Great White Shark"
-        className="absolute top-1/2 left-1/2 h-[180%] w-[180%] -translate-x-1/2 -translate-y-1/2 scale-[0.56]"
+        className="absolute top-1/2 left-1/2 h-[150%] w-[150%] -translate-x-1/2 -translate-y-1/2 scale-[0.67]"
         style={{ transformOrigin: "center center" }}
         frameBorder="0"
         allow="autoplay; fullscreen; xr-spatial-tracking"
