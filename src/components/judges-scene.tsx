@@ -1,140 +1,241 @@
 "use client";
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Float } from "@react-three/drei";
-import { useRef, useState, useEffect } from "react";
+import { useGLTF } from "@react-three/drei";
+import {
+  EffectComposer,
+  Bloom,
+  Vignette,
+  ChromaticAberration,
+} from "@react-three/postprocessing";
+import { BlendFunction } from "postprocessing";
+import { useRef, useEffect } from "react";
 import * as THREE from "three";
 import type { Group } from "three";
 
-function useLoadFBX(url: string) {
-  const [model, setModel] = useState<Group | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Defer loading to let the canvas stabilize first
-    const timeout = setTimeout(async () => {
-      try {
-        const { FBXLoader } = await import(
-          "three/examples/jsm/loaders/FBXLoader.js"
-        );
-        const loader = new FBXLoader();
-        loader.load(
-          url,
-          (fbx) => {
-            if (cancelled) return;
-            // Replace all materials with a simple one to avoid GPU memory issues
-            const mat = new THREE.MeshPhongMaterial({
-              color: "#4338ca",
-              specular: "#6366f1",
-              shininess: 30,
-            });
-            fbx.traverse((child) => {
-              if ((child as THREE.Mesh).isMesh) {
-                const mesh = child as THREE.Mesh;
-                // Dispose heavy textures
-                if (Array.isArray(mesh.material)) {
-                  mesh.material.forEach((m) => m.dispose());
-                } else if (mesh.material) {
-                  (mesh.material as THREE.Material).dispose();
-                }
-                mesh.material = mat;
-                // Reduce geometry if too heavy
-                mesh.frustumCulled = true;
-              }
-            });
-            setModel(fbx);
-          },
-          undefined,
-          () => { /* silently fail */ },
-        );
-      } catch {
-        /* silently fail */
-      }
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timeout);
-    };
-  }, [url]);
-
-  return model;
-}
-
-function JudgeModel({ position }: { position: [number, number, number] }) {
+function JudgeFigure({
+  position,
+  delay = 0,
+  accentColor = "#3b82f6",
+}: {
+  position: [number, number, number];
+  delay?: number;
+  accentColor?: string;
+}) {
   const ref = useRef<Group>(null);
-  const model = useLoadFBX("/joe.fbx");
 
   useFrame((state) => {
     if (ref.current) {
-      ref.current.rotation.y =
-        Math.sin(state.clock.elapsedTime * 0.3 + position[0]) * 0.05;
+      const t = state.clock.elapsedTime;
+      ref.current.rotation.y = Math.sin(t * 0.4 + delay) * 0.08;
+      ref.current.position.y = position[1] + Math.sin(t * 0.6 + delay) * 0.02;
     }
   });
 
-  if (!model) return null;
-
   return (
     <group ref={ref} position={position}>
-      <primitive object={model} scale={0.01} />
+      {/* Body — cone */}
+      <mesh position={[0, 0.55, 0]}>
+        <coneGeometry args={[0.35, 1.1, 8]} />
+        <meshStandardMaterial
+          color={accentColor}
+          metalness={0.3}
+          roughness={0.5}
+          emissive={accentColor}
+          emissiveIntensity={0.1}
+        />
+      </mesh>
+      {/* Head — sphere */}
+      <mesh position={[0, 1.3, 0]}>
+        <sphereGeometry args={[0.2, 16, 16]} />
+        <meshStandardMaterial
+          color={accentColor}
+          metalness={0.3}
+          roughness={0.5}
+          emissive={accentColor}
+          emissiveIntensity={0.1}
+        />
+      </mesh>
     </group>
   );
 }
 
 function JudgeChair({ position }: { position: [number, number, number] }) {
-  const ref = useRef<Group>(null);
-
-  useFrame((state) => {
-    if (ref.current) {
-      ref.current.rotation.y =
-        Math.sin(state.clock.elapsedTime * 0.3 + position[0]) * 0.1;
-    }
-  });
+  const { scene } = useGLTF("/chair.glb");
 
   return (
-    <group ref={ref} position={position}>
-      <Float speed={1.5} rotationIntensity={0.2} floatIntensity={0.3}>
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[0.8, 0.1, 0.8]} />
-          <meshStandardMaterial color="#2d2b55" metalness={0.6} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 0.6, -0.35]}>
-          <boxGeometry args={[0.8, 1.1, 0.1]} />
-          <meshStandardMaterial color="#3b3775" metalness={0.5} roughness={0.4} />
-        </mesh>
-        <mesh position={[-0.4, 0.3, 0]}>
-          <boxGeometry args={[0.08, 0.5, 0.6]} />
-          <meshStandardMaterial color="#2d2b55" metalness={0.6} roughness={0.3} />
-        </mesh>
-        <mesh position={[0.4, 0.3, 0]}>
-          <boxGeometry args={[0.08, 0.5, 0.6]} />
-          <meshStandardMaterial color="#2d2b55" metalness={0.6} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 1.4, -0.1]}>
-          <sphereGeometry args={[0.25, 16, 16]} />
-          <meshStandardMaterial color="#4338ca" metalness={0.4} roughness={0.5} />
-        </mesh>
-        <mesh position={[0, 0.8, 0]}>
-          <capsuleGeometry args={[0.2, 0.4, 8, 16]} />
-          <meshStandardMaterial color="#4338ca" metalness={0.4} roughness={0.5} />
-        </mesh>
-      </Float>
+    <group position={position}>
+      <primitive object={scene.clone()} scale={0.5} />
     </group>
   );
 }
 
+useGLTF.preload("/chair.glb");
+
+
+function SpotlightCone({
+  position,
+  color = "#818cf8",
+}: {
+  position: [number, number, number];
+  color?: string;
+}) {
+  const ref = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    if (ref.current) {
+      const mat = ref.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.04 + Math.sin(state.clock.elapsedTime * 0.8) * 0.015;
+    }
+  });
+
+  return (
+    <mesh ref={ref} position={position} rotation={[0, 0, 0]}>
+      <coneGeometry args={[1.5, 5, 32, 1, true]} />
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={0.05}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+}
+
+function useWoodTexture() {
+  const texture = useRef<THREE.CanvasTexture | null>(null);
+
+  if (!texture.current) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d")!;
+
+    ctx.fillStyle = "#8B5E3C";
+    ctx.fillRect(0, 0, 512, 512);
+
+    for (let i = 0; i < 200; i++) {
+      const y = Math.random() * 512;
+      const width = 512;
+      const height = 1 + Math.random() * 3;
+      ctx.fillStyle = `rgba(${60 + Math.random() * 40}, ${30 + Math.random() * 20}, ${10 + Math.random() * 15}, ${0.15 + Math.random() * 0.2})`;
+      ctx.fillRect(0, y, width, height);
+    }
+
+    for (let i = 0; i < 30; i++) {
+      const x = Math.random() * 512;
+      ctx.strokeStyle = `rgba(50, 25, 10, ${0.1 + Math.random() * 0.1})`;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x + (Math.random() - 0.5) * 20, 512);
+      ctx.stroke();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(4, 4);
+    texture.current = tex;
+  }
+
+  return texture.current;
+}
+
 function Stage() {
+  const woodTex = useWoodTexture();
+
   return (
     <group>
+      {/* Wood floor */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
-        <planeGeometry args={[12, 8]} />
-        <meshStandardMaterial color="#2e2a5e" metalness={0.4} roughness={0.5} />
+        <planeGeometry args={[20, 12]} />
+        <meshStandardMaterial
+          map={woodTex}
+          color="#a0714f"
+          roughness={0.7}
+          metalness={0.05}
+        />
       </mesh>
-      <mesh position={[0, 2, -3]}>
-        <planeGeometry args={[12, 6]} />
-        <meshStandardMaterial color="#252150" metalness={0.2} roughness={0.6} />
+      {/* Back wall */}
+      <mesh position={[0, 2.5, -4]}>
+        <planeGeometry args={[20, 8]} />
+        <meshStandardMaterial color="#222225" metalness={0.1} roughness={0.9} />
+      </mesh>
+      {/* Accent light strips on back wall */}
+      <mesh position={[-4, 2.5, -3.95]}>
+        <boxGeometry args={[0.02, 5, 0.02]} />
+        <meshStandardMaterial
+          color="#f0c866"
+          emissive="#f0c866"
+          emissiveIntensity={2}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[4, 2.5, -3.95]}>
+        <boxGeometry args={[0.02, 5, 0.02]} />
+        <meshStandardMaterial
+          color="#f0c866"
+          emissive="#f0c866"
+          emissiveIntensity={2}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[0, 4.9, -3.95]}>
+        <boxGeometry args={[8, 0.02, 0.02]} />
+        <meshStandardMaterial
+          color="#f0c866"
+          emissive="#f0c866"
+          emissiveIntensity={2}
+          toneMapped={false}
+        />
       </mesh>
     </group>
+  );
+}
+
+function Particles() {
+  const ref = useRef<THREE.Points>(null);
+  const count = 80;
+
+  const positions = useRef(
+    Float32Array.from({ length: count * 3 }, (_, i) => {
+      if (i % 3 === 0) return (Math.random() - 0.5) * 12;
+      if (i % 3 === 1) return Math.random() * 5;
+      return (Math.random() - 0.5) * 8;
+    }),
+  );
+
+  useFrame((state) => {
+    if (!ref.current) return;
+    const t = state.clock.elapsedTime;
+    const pos = ref.current.geometry.attributes.position.array as Float32Array;
+    for (let i = 0; i < count; i++) {
+      pos[i * 3 + 1] += Math.sin(t * 0.3 + i) * 0.001;
+    }
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions.current, 3]}
+          count={count}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.03}
+        color="#ffeedd"
+        transparent
+        opacity={0.6}
+        sizeAttenuation
+        depthWrite={false}
+      />
+    </points>
   );
 }
 
@@ -159,38 +260,88 @@ function ContextLossHandler() {
 }
 
 export function JudgesScene() {
-  const positions: [number, number, number][] = [
-    [-3, 0, -1],
-    [-1.5, 0, -0.5],
-    [1.5, 0, -0.5],
-    [3, 0, -1],
+  const judges: {
+    pos: [number, number, number];
+    chairPos: [number, number, number];
+    color: string;
+    delay: number;
+  }[] = [
+    { pos: [-2.2, 0, 0], chairPos: [-2.2, 0, 0], color: "#e63946", delay: 0 },
+    { pos: [-0.75, 0, 0.3], chairPos: [-0.75, 0, 0.3], color: "#2a9d8f", delay: 1 },
+    { pos: [0.75, 0, 0.3], chairPos: [0.75, 0, 0.3], color: "#e9c46a", delay: 2 },
+    { pos: [2.2, 0, 0], chairPos: [2.2, 0, 0], color: "#3b82f6", delay: 3 },
   ];
 
   return (
     <Canvas
-      camera={{ position: [0, 2, 5], fov: 50 }}
+      camera={{ position: [0, 3.2, 5.5], fov: 45 }}
       className="h-full w-full"
-      gl={{ antialias: false, powerPreference: "high-performance" }}
+      gl={{ antialias: true, powerPreference: "high-performance" }}
     >
       <ContextLossHandler />
-      <ambientLight intensity={2.5} />
-      <directionalLight position={[0, 5, 5]} intensity={3} color="#ffffff" />
-      <directionalLight position={[0, 3, 8]} intensity={2} color="#e2e8f0" />
-      <pointLight position={[0, 4, 3]} intensity={3} color="#818cf8" />
-      <pointLight position={[-3, 3, 2]} intensity={2} color="#a78bfa" />
-      <pointLight position={[3, 3, 2]} intensity={2} color="#818cf8" />
+      <fog attach="fog" args={["#1a1a1f", 8, 22]} />
+      <color attach="background" args={["#1a1a1f"]} />
+
+      {/* Lighting */}
+      <ambientLight intensity={1.2} />
+      <directionalLight position={[0, 5, 3]} intensity={3} color="#fff8f0" />
+      <directionalLight position={[0, 3, 6]} intensity={2} color="#ffffff" />
+      <pointLight position={[0, 4, 2]} intensity={3} color="#ffeedd" distance={12} decay={2} />
+      <pointLight position={[-3, 3, 1]} intensity={2} color="#ffffff" distance={10} decay={2} />
+      <pointLight position={[3, 3, 1]} intensity={2} color="#ffffff" distance={10} decay={2} />
       <spotLight
         position={[0, 6, 2]}
-        angle={0.6}
-        penumbra={0.5}
-        intensity={4}
+        angle={0.5}
+        penumbra={0.6}
+        intensity={5}
         color="#ffffff"
+        castShadow
       />
+      <spotLight
+        position={[-2.5, 5, 3]}
+        angle={0.4}
+        penumbra={0.8}
+        intensity={2.5}
+        color="#fff8f0"
+      />
+      <spotLight
+        position={[2.5, 5, 3]}
+        angle={0.4}
+        penumbra={0.8}
+        intensity={2.5}
+        color="#fff8f0"
+      />
+
       <Stage />
-      <JudgeModel position={[0, -0.5, -1]} />
-      {positions.map((pos, i) => (
-        <JudgeChair key={i} position={pos} />
+      <Particles />
+
+      {/* Volumetric spotlight cones */}
+      <SpotlightCone position={[0, 2.5, 1]} color="#ffeedd" />
+      <SpotlightCone position={[-2.5, 2.5, 0.5]} color="#ffeedd" />
+      <SpotlightCone position={[2.5, 2.5, 0.5]} color="#ffeedd" />
+
+      {/* Judge figures and chairs */}
+      {judges.map((j, i) => (
+        <group key={i}>
+          <JudgeChair position={j.chairPos} />
+          <JudgeFigure position={[j.pos[0], j.pos[1] + 0.5, j.pos[2]]} delay={j.delay} accentColor={j.color} />
+        </group>
       ))}
+
+      {/* Post-processing */}
+      <EffectComposer>
+        <Bloom
+          intensity={0.8}
+          luminanceThreshold={0.6}
+          luminanceSmoothing={0.9}
+          mipmapBlur
+        />
+        <Vignette eskil={false} offset={0.4} darkness={0.4} />
+        <ChromaticAberration
+          blendFunction={BlendFunction.NORMAL}
+          offset={new THREE.Vector2(0.0005, 0.0005)}
+        />
+      </EffectComposer>
     </Canvas>
   );
 }

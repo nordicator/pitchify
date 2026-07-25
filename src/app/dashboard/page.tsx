@@ -17,13 +17,12 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { JudgesSceneLoader } from "@/components/judges-scene-loader";
 
 type Mode = "generate" | "custom";
-type Difficulty = "easy" | "normal" | "difficult";
 
-const difficulties = {
-  easy: { label: "Easy", raise: "$50K", raiseNum: 50000, equity: "20%" },
-  normal: { label: "Normal", raise: "$250K", raiseNum: 250000, equity: "10%" },
-  difficult: { label: "Difficult", raise: "$1M", raiseNum: 1000000, equity: "5%" },
-} as const;
+type GeneratedPitch = {
+  content: { product_name: string; elevator_pitch: string; description: string };
+  financials: { raise_amount: number; equity_percent: number };
+  image_base64: string;
+};
 
 function RollingNumber({ target, duration = 2000 }: { target: number; duration?: number }) {
   const [value, setValue] = useState(0);
@@ -68,14 +67,21 @@ const sampleOffers: Offer[] = [
 
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode | null>(null);
-  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
   const [customIdea, setCustomIdea] = useState("");
-  const [phase, setPhase] = useState<"setup" | "launching" | "session" | "summary">("setup");
+  const [customRaise, setCustomRaise] = useState("");
+  const [customEquity, setCustomEquity] = useState("");
+  const [goalRaise, setGoalRaise] = useState(0);
+  const [goalEquity, setGoalEquity] = useState(0);
+  const [generatedPitch, setGeneratedPitch] = useState<GeneratedPitch | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [genStep, setGenStep] = useState(0);
+  const [phase, setPhase] = useState<"setup" | "generating" | "briefing" | "launching" | "session" | "summary">("setup");
   const [offers, setOffers] = useState<Offer[]>([]);
   const [raised, setRaised] = useState(0);
   const [equityGiven, setEquityGiven] = useState(0);
   const [timeLeft, setTimeLeft] = useState(180);
   const [timeAlert, setTimeAlert] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<{ speaker: string; text: string }[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -141,21 +147,47 @@ export default function Dashboard() {
   }, [timeAlert]);
 
   const canLaunch =
-    difficulty !== null &&
-    (mode === "generate" || (mode === "custom" && customIdea.trim().length > 0));
+    mode === "generate" ||
+    (mode === "custom" && customIdea.trim().length > 0 && parseFloat(customRaise) > 0 && parseFloat(customEquity) > 0);
 
-  const placeholderTranscript = [
-    { speaker: "You", text: "We're building an AI-powered tool that helps sales teams practice their pitches before real calls." },
-    { speaker: "The Skeptic", text: "So it's a role-play simulator. How is this different from having a colleague run through it with you?" },
-    { speaker: "You", text: "Three things — it's available 24/7, it gives structured feedback on specific metrics, and it adapts to the buyer persona you're selling to." },
-    { speaker: "Mr. Wonderful", text: "What do you charge per seat?" },
-    { speaker: "You", text: "$49 per user per month, with team plans starting at $399 for ten seats." },
-    { speaker: "The Operator", text: "What's your current ARR and how many paying teams do you have?" },
+  const genSteps = [
+    "Brainstorming a product concept...",
+    "Crafting the elevator pitch...",
+    "Setting financial targets...",
+    "Rendering product shot...",
+    "Packaging your challenge...",
   ];
 
-  if (phase === "summary" && difficulty) {
-    const goalMet = raised >= difficulties[difficulty].raiseNum;
-    const equityLimit = parseFloat(difficulties[difficulty].equity);
+  useEffect(() => {
+    if (phase !== "generating") return;
+
+    const stepInterval = setInterval(() => {
+      setGenStep((s) => Math.min(s + 1, genSteps.length - 1));
+    }, 2500);
+
+    const doFetch = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/generate-pitch", { method: "POST" });
+        if (!res.ok) throw new Error("Generation failed");
+        const data: GeneratedPitch = await res.json();
+        setGeneratedPitch(data);
+        setGoalRaise(data.financials.raise_amount);
+        setGoalEquity(data.financials.equity_percent);
+        setGenStep(genSteps.length - 1);
+        setTimeout(() => setPhase("briefing"), 800);
+      } catch {
+        setPhase("setup");
+        setGenerating(false);
+      }
+    };
+    doFetch();
+
+    return () => clearInterval(stepInterval);
+  }, [phase]);
+
+  if (phase === "summary") {
+    const goalMet = raised >= goalRaise;
+    const equityLimit = goalEquity;
     const withinEquity = equityGiven <= equityLimit;
     const passed = goalMet && withinEquity;
 
@@ -188,7 +220,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Goal</span>
               <span className="font-mono text-sm font-semibold">
-                {difficulties[difficulty].raise}
+                ${goalRaise.toLocaleString()}
               </span>
             </div>
             <div className="h-px bg-border" />
@@ -203,7 +235,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Equity limit</span>
               <span className="font-mono text-sm font-semibold">
-                {difficulties[difficulty].equity}
+                {goalEquity}%
               </span>
             </div>
             <div className="h-px bg-border" />
@@ -228,8 +260,15 @@ export default function Dashboard() {
               setRaised(0);
               setEquityGiven(0);
               setOffers([]);
+              setTranscript([]);
               setMode(null);
-              setDifficulty(null);
+              setGoalRaise(0);
+              setGoalEquity(0);
+              setGeneratedPitch(null);
+              setGenerating(false);
+              setCustomIdea("");
+              setCustomRaise("");
+              setCustomEquity("");
               setTimeLeft(180);
             }}
           >
@@ -240,8 +279,133 @@ export default function Dashboard() {
     );
   }
 
-  if (phase === "launching" && difficulty) {
-    const { raiseNum, equity } = difficulties[difficulty];
+  if (phase === "generating") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center gap-8"
+        >
+          <div className="relative size-16">
+            <motion.div
+              className="absolute inset-0 rounded-full border-2 border-primary/30"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            />
+            <motion.div
+              className="absolute inset-1 rounded-full border-2 border-t-primary border-r-transparent border-b-transparent border-l-transparent"
+              animate={{ rotate: -360 }}
+              transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+            />
+            <motion.div
+              className="absolute inset-3 rounded-full border-2 border-t-transparent border-r-primary border-b-transparent border-l-transparent"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            />
+          </div>
+
+          <div className="flex flex-col items-center gap-4">
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={genStep}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="text-sm font-medium"
+              >
+                {genSteps[genStep]}
+              </motion.p>
+            </AnimatePresence>
+
+            <div className="flex gap-1.5">
+              {genSteps.map((_, i) => (
+                <motion.div
+                  key={i}
+                  className={`h-1.5 rounded-full ${i <= genStep ? "bg-primary" : "bg-muted"}`}
+                  initial={{ width: 8 }}
+                  animate={{ width: i === genStep ? 24 : 8 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                />
+              ))}
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            This usually takes 10–20 seconds
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (phase === "briefing" && generatedPitch) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex w-full max-w-xl flex-col items-center gap-6 text-center"
+        >
+          <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+            Your challenge
+          </p>
+
+          <img
+            src={generatedPitch.image_base64}
+            alt={generatedPitch.content.product_name}
+            className="h-48 w-48 rounded-2xl border object-cover shadow-lg"
+          />
+
+          <div className="grid gap-2">
+            <h1 className="text-2xl font-bold tracking-tight">
+              {generatedPitch.content.product_name}
+            </h1>
+            <p className="text-base text-muted-foreground">
+              {generatedPitch.content.elevator_pitch}
+            </p>
+          </div>
+
+          <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+            {generatedPitch.content.description}
+          </p>
+
+          <div className="grid w-full max-w-xs gap-3 rounded-xl border p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Target raise</span>
+              <span className="font-mono text-sm font-semibold">${goalRaise.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Max equity</span>
+              <span className="font-mono text-sm font-semibold">{goalEquity}%</span>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <Button
+              size="lg"
+              onClick={() => setPhase("launching")}
+            >
+              Accept challenge
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => {
+                setGeneratedPitch(null);
+                setGenerating(false);
+                setPhase("setup");
+              }}
+            >
+              Reroll
+            </Button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (phase === "launching") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-8">
         <motion.div
@@ -253,7 +417,7 @@ export default function Dashboard() {
             Your target raise
           </p>
           <h1 className="text-6xl font-bold tracking-tight md:text-8xl">
-            <RollingNumber target={raiseNum} duration={2200} />
+            <RollingNumber target={goalRaise} duration={2200} />
           </h1>
           <motion.div
             initial={{ opacity: 0 }}
@@ -262,7 +426,7 @@ export default function Dashboard() {
             className="flex flex-col items-center gap-1"
           >
             <p className="text-lg text-muted-foreground">
-              for <span className="font-semibold text-foreground">{equity}</span> equity
+              for <span className="font-semibold text-foreground">{goalEquity}%</span> equity
             </p>
           </motion.div>
           <motion.div
@@ -299,13 +463,13 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex items-center gap-4 font-mono text-xs">
-            {difficulty && (
+            {goalRaise > 0 && (
               <>
                 <span className="text-muted-foreground">
-                  Goal <span className="font-semibold text-foreground">{difficulties[difficulty].raise}</span>
+                  Goal <span className="font-semibold text-foreground">${goalRaise.toLocaleString()}</span>
                 </span>
                 <span className="text-muted-foreground">
-                  Equity limit <span className="font-semibold text-foreground">{difficulties[difficulty].equity}</span>
+                  Equity limit <span className="font-semibold text-foreground">{goalEquity}%</span>
                 </span>
               </>
             )}
@@ -316,21 +480,21 @@ export default function Dashboard() {
         </header>
 
         {/* Progress bar */}
-        {difficulty && (
+        {goalRaise > 0 && (
           <div className="shrink-0 border-b px-6 py-2">
             <div className="flex items-center justify-between mb-1">
               <span className="font-mono text-xs text-muted-foreground">
-                Raised ${raised.toLocaleString()} of {difficulties[difficulty].raise}
+                Raised ${raised.toLocaleString()} of ${goalRaise.toLocaleString()}
               </span>
               <span className="font-mono text-xs text-muted-foreground">
-                {Math.min(Math.round((raised / difficulties[difficulty].raiseNum) * 100), 100)}%
+                {Math.min(Math.round((raised / goalRaise) * 100), 100)}%
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <motion.div
                 className="h-full rounded-full bg-primary"
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min((raised / difficulties[difficulty].raiseNum) * 100, 100)}%` }}
+                animate={{ width: `${Math.min((raised / goalRaise) * 100, 100)}%` }}
                 transition={{ type: "spring", stiffness: 100, damping: 20 }}
               />
             </div>
@@ -414,6 +578,7 @@ export default function Dashboard() {
                             setRaised((prev) => prev + num);
                             setEquityGiven((prev) => prev + eq);
                             setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+                            setTranscript((prev) => [...prev, { speaker: "You", text: `Accepted ${offer.judge}'s offer of ${offer.amount} for ${offer.equity}.` }]);
                           }}
                         >
                           Accept
@@ -421,9 +586,10 @@ export default function Dashboard() {
                         <Button
                           variant="ghost"
                           size="xs"
-                          onClick={() =>
-                            setOffers((prev) => prev.filter((o) => o.id !== offer.id))
-                          }
+                          onClick={() => {
+                            setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+                            setTranscript((prev) => [...prev, { speaker: "You", text: `Declined ${offer.judge}'s offer of ${offer.amount} for ${offer.equity}.` }]);
+                          }}
                         >
                           Decline
                         </Button>
@@ -442,6 +608,7 @@ export default function Dashboard() {
                 onClick={() => {
                   const next = sampleOffers[offers.length % sampleOffers.length];
                   setOffers((prev) => [...prev, { ...next, id: Date.now() }]);
+                  setTranscript((prev) => [...prev, { speaker: next.judge, text: `Made a ${next.amount} offer for ${next.equity} equity.` }]);
                 }}
               >
                 Test offer
@@ -454,17 +621,16 @@ export default function Dashboard() {
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <p className="text-sm font-medium">Transcript</p>
               <p className="font-mono text-xs text-muted-foreground">
-                {placeholderTranscript.length} messages
+                {transcript.length} messages
               </p>
             </div>
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="grid gap-4">
-                {placeholderTranscript.map((msg, i) => (
+                {transcript.map((msg, i) => (
                   <motion.div
                     key={i}
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.08 }}
                   >
                     <p className="text-xs font-medium text-muted-foreground">
                       {msg.speaker}
@@ -576,63 +742,77 @@ export default function Dashboard() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="grid gap-2 overflow-hidden"
+                    className="grid gap-4 overflow-hidden"
                   >
-                    <Label htmlFor="idea">Your product idea</Label>
-                    <Textarea
-                      id="idea"
-                      value={customIdea}
-                      onChange={(e) => setCustomIdea(e.target.value)}
-                      placeholder="A SaaS tool that..."
-                      rows={3}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {mode !== null && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="grid gap-3 overflow-hidden"
-                  >
-                    <Label>Difficulty</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(Object.entries(difficulties) as [Difficulty, typeof difficulties[Difficulty]][]).map(
-                        ([key, { label, raise, equity }]) => (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => setDifficulty(key)}
-                            className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition-colors ${
-                              difficulty === key
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:border-muted-foreground/30"
-                            }`}
-                          >
-                            <span className="text-sm font-medium">{label}</span>
-                            <span className="text-xs text-muted-foreground">
-                              Raise {raise}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              for {equity}
-                            </span>
-                          </button>
-                        ),
-                      )}
+                    <div className="grid gap-2">
+                      <Label htmlFor="idea">Your product idea</Label>
+                      <Textarea
+                        id="idea"
+                        value={customIdea}
+                        onChange={(e) => setCustomIdea(e.target.value)}
+                        placeholder="A SaaS tool that..."
+                        rows={3}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="grid gap-2">
+                        <Label htmlFor="raise">Target raise</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                          <input
+                            id="raise"
+                            type="text"
+                            inputMode="numeric"
+                            value={customRaise ? Number(customRaise).toLocaleString() : ""}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9]/g, "");
+                              if (Number(raw) > 1000000) return;
+                              setCustomRaise(raw);
+                            }}
+                            placeholder="250,000"
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent pl-7 pr-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="equity">Max equity</Label>
+                        <div className="relative">
+                          <input
+                            id="equity"
+                            type="text"
+                            inputMode="numeric"
+                            value={customEquity}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9.]/g, "");
+                              if (parseFloat(raw) > 100) return;
+                              setCustomEquity(raw);
+                            }}
+                            placeholder="10"
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent pl-3 pr-7 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+                        </div>
+                      </div>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
 
               <Button
-                disabled={!canLaunch}
-                onClick={() => setPhase("launching")}
+                disabled={!canLaunch || generating}
+                onClick={() => {
+                  if (mode === "generate") {
+                    setGenStep(0);
+                    setPhase("generating");
+                  } else {
+                    setGoalRaise(parseFloat(customRaise));
+                    setGoalEquity(parseFloat(customEquity));
+                    setPhase("launching");
+                  }
+                }}
                 className="w-full"
               >
-                Launch session
+                {generating ? "Generating..." : mode === "generate" ? "Generate challenge" : "Launch session"}
               </Button>
             </CardContent>
           </Card>

@@ -1,5 +1,5 @@
 numpy
-pyaudio
+# pyaudio
 torch
 silero_vad
 google-genai 
