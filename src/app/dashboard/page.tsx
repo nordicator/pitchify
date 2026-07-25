@@ -63,7 +63,6 @@ type Offer = {
 const sampleOffers: Offer[] = [
   { id: 1, judge: "Mr. Wonderful", amount: "$50K", equity: "25%" },
   { id: 2, judge: "The Visionary", amount: "$250K", equity: "15%" },
-  { id: 3, judge: "The Closer", amount: "$200K", equity: "12%" },
 ];
 
 export default function Dashboard() {
