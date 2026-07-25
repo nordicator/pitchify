@@ -1,0 +1,4 @@
+numpy
+pyaudio
+torch
+silero_vad
