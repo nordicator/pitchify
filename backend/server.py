@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from preGeneration import generate_pitch, generate_pitch_context
 from live_session import run_live_session
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 
 app = FastAPI(title="Pitchify API")
 
