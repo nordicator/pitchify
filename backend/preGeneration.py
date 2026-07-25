@@ -2,6 +2,7 @@ import io
 import os
 import sys
 import uuid
+from typing import Tuple
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -37,131 +38,154 @@ class PitchData(BaseModel):
     )
 
 
+# =====================================================================
+# FUNCTION 1: Generate Pitch Content & Image
+# =====================================================================
+def generate_pitch() -> Tuple[PitchData, str, Image.Image]:
+    """
+    Generates startup concept metadata, a markdown summary, 
+    and a product image using Gemini models.
+    """
+    # Step 1: Gemini generates random project details
+    pitch_prompt = """
+    Invent a brand new, highly innovative physical startup product concept. 
+    It could be smart hardware, eco-tech, home innovation, wearable tech, or consumer electronics.
+    Generate realistic financial ask parameters and visual photography guidelines.
+    """
+
+    pitch_response = client.models.generate_content(
+        model="gemini-3.5-flash",
+        contents=pitch_prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=PitchData,
+        ),
+    )
+    pitch: PitchData = PitchData.model_validate_json(pitch_response.text)
+
+    # Step 2: Format the Pitch Text
+    summary_prompt = f"""
+    Act as an expert venture capital advisor. Format a clean pitch summary using this concept:
+    
+    - Product Name: {pitch.product_name}
+    - Product Description: {pitch.product_description}
+    - Seeking Investment: ${pitch.raise_amount}
+    - Equity On Offer: {pitch.equity_offered}%
+
+    Format using markdown:
+    # {pitch.product_name}
+    
+    ## 🚀 Elevator Pitch
+    [One compelling sentence]
+    
+    ## 📄 Product Overview
+    [2-3 punchy feature bullet points]
+    
+    ## 📊 The Ask
+    [Summary of raise amount and equity offered]
+    """
+
+    summary_response = client.models.generate_content(
+        model="gemini-3.5-flash", 
+        contents=summary_prompt
+    )
+
+    # Step 3: Render product shot
+    image_prompt = (
+        f"A professional, commercial product photograph focusing on '{pitch.product_name}'. "
+        f"Description: {pitch.product_description}. "
+        f"Visual Style: {pitch.visual_style}. Studio lighting, clean background, high detail."
+    )
+
+    print("📸 Rendering matching product shot with gemini-2.5-flash-image...")
+    image_response = client.models.generate_content(
+        model="gemini-2.5-flash-image",
+        contents=image_prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+        ),
+    )
+
+    # Extract PIL Image object
+    if image_response.candidates:
+        for part in image_response.candidates[0].content.parts:
+            if part.inline_data:
+                return pitch, summary_response.text, part.as_image()
+
+    raise RuntimeError("Could not extract image from response.")
+
+
+# =====================================================================
+# FUNCTION 2: Save Assets to Markdown and Image Files
+# =====================================================================
+def save_to_md(
+    pitch: PitchData, 
+    summary_markdown: str, 
+    image: Image.Image, 
+    output_dir: str
+) -> Tuple[str, str]:
+    """
+    Saves the PIL Image and Markdown file to the designated directory.
+    Returns the file paths of the saved assets.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    unique_suffix = uuid.uuid4().hex[:6]
+    safe_name = "".join(
+        c for c in pitch.product_name.lower().replace(" ", "_") if c.isalnum() or c == "_"
+    )
+
+    image_filename = f"{safe_name}_{unique_suffix}.png"
+    md_filename = f"{safe_name}_{unique_suffix}.md"
+
+    image_path = os.path.join(output_dir, image_filename)
+    md_path = os.path.join(output_dir, md_filename)
+
+    # Save the PIL image object
+    image.save(image_path)
+    print(f"✅ Product shot saved to: {image_path}")
+
+    # Build and write markdown file
+    md_content = f"""# Pitch Deck Summary: {pitch.product_name}
+
+![{pitch.product_name} Product Shot](./{image_filename})
+
+{summary_markdown}
+"""
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
+
+    print(f"📄 Pitch output saved to: {md_path}")
+    return image_path, md_path
+
+
+# =====================================================================
+# FUNCTION 3: Main Execution Flow
+# =====================================================================
 def main():
     print("🎲 Inventing a random startup pitch with Gemini...")
     print("-" * 50)
 
     try:
-        # Define and create output directory
         output_dir = os.path.join("backend", "pitches")
-        os.makedirs(output_dir, exist_ok=True)
 
-        # ==========================================
-        # STEP 1: Gemini generates random project details
-        # Model: gemini-3.5-flash
-        # ==========================================
-        pitch_prompt = """
-        Invent a brand new, highly innovative physical startup product concept. 
-        It could be smart hardware, eco-tech, home innovation, wearable tech, or consumer electronics.
-        Generate realistic financial ask parameters and visual photography guidelines.
-        """
+        # 1. Generate content via Gemini
+        pitch, summary_markdown, image = generate_pitch()
 
-        pitch_response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=pitch_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=PitchData,
-            ),
-        )
-
-        # Parse the JSON response into our Pydantic model instance
-        pitch: PitchData = PitchData.model_validate_json(pitch_response.text)
-
+        # Display console feedback
         print(f"✨ Product Name: {pitch.product_name}")
         print(f"💰 Raising: ${pitch.raise_amount} for {pitch.equity_offered}% equity")
         print(f"📝 Description: {pitch.product_description.strip()}\n")
 
-        # ==========================================
-        # STEP 2: Format the Pitch Text
-        # Model: gemini-3.5-flash
-        # ==========================================
-        summary_prompt = f"""
-        Act as an expert venture capital advisor. Format a clean pitch summary using this concept:
-        
-        - Product Name: {pitch.product_name}
-        - Product Description: {pitch.product_description}
-        - Seeking Investment: ${pitch.raise_amount}
-        - Equity On Offer: {pitch.equity_offered}%
-
-        Format using markdown:
-        # {pitch.product_name}
-        
-        ## 🚀 Elevator Pitch
-        [One compelling sentence]
-        
-        ## 📄 Product Overview
-        [2-3 punchy feature bullet points]
-        
-        ## 📊 The Ask
-        [Summary of raise amount and equity offered]
-        """
-
-        summary_response = client.models.generate_content(
-            model="gemini-3.5-flash", 
-            contents=summary_prompt
+        # 2. Save image & markdown assets
+        image_path, md_path = save_to_md(
+            pitch=pitch, 
+            summary_markdown=summary_markdown, 
+            image=image, 
+            output_dir=output_dir
         )
 
-        # ==========================================
-        # STEP 3: Render product shot using working code
-        # Model: gemini-2.5-flash-image
-        # ==========================================
-        image_prompt = (
-            f"A professional, commercial product photograph focusing on '{pitch.product_name}'. "
-            f"Description: {pitch.product_description}. "
-            f"Visual Style: {pitch.visual_style}. Studio lighting, clean background, high detail."
-        )
-
-        print("📸 Rendering matching product shot with gemini-2.5-flash-image...")
-        image_response = client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=image_prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-            ),
-        )
-
-        # File naming setups
-        unique_suffix = uuid.uuid4().hex[:6]
-        safe_name = "".join(
-            c for c in pitch.product_name.lower().replace(" ", "_") if c.isalnum() or c == "_"
-        )
-        
-        image_filename = f"{safe_name}_{unique_suffix}.png"
-        md_filename = f"{safe_name}_{unique_suffix}.md"
-
-        # Full relative paths inside backend/pitches
-        image_path = os.path.join(output_dir, image_filename)
-        md_path = os.path.join(output_dir, md_filename)
-
-        # Extract and save image using `part.as_image()`
-        image_saved = False
-        if image_response.candidates:
-            for part in image_response.candidates[0].content.parts:
-                if part.inline_data:
-                    image = part.as_image()
-                    image.save(image_path)
-                    print(f"✅ Product shot saved to: {image_path}")
-                    image_saved = True
-                    break
-
-        if not image_saved:
-            print("⚠️ Warning: Could not extract image from response.")
-
-        # ==========================================
-        # STEP 4: Save output as a Markdown (.md) file inside backend/pitches
-        # ==========================================
-        md_content = f"""# Pitch Deck Summary: {pitch.product_name}
-
-![{pitch.product_name} Product Shot](./{image_filename})
-
-{summary_response.text}
-"""
-
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(md_content)
-
-        print(f"📄 Pitch output saved to: {md_path}")
         print("=" * 50)
 
     except Exception as e:
