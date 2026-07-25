@@ -2,3 +2,7 @@ numpy
 pyaudio
 torch
 silero_vad
+google-genai 
+python-dotenv 
+gradio 
+pillow
